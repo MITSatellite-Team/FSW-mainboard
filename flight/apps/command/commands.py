@@ -345,6 +345,22 @@ def INIT_TRANS(tid, number_of_packets, hash_MSB, hash_LSB):
     # return a structured "not implemented" response to avoid breaking downstream handling
     return ["not_implemented"]
 
+@register_command()
+def LIST_DIR(skip_elements, string_command):
+    """
+    Try and list whatever is on the given directory
+    the result will be sent as a string, skip_elements will skip the first x elements
+    """
+    
+    import os
+    
+    try:
+        file_list = os.listdir(string_command)
+    except Exception as e:
+        return [f"error: {e}"]
+
+    return file_list[skip_elements:]
+
 
 def get_tx_message_header():
     """ " Helper function to obtain the tx message header to send back"""
