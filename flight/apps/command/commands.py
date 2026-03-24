@@ -361,6 +361,19 @@ def LIST_DIR(skip_elements, string_command):
 
     return file_list[skip_elements:]
 
+@register_command()
+def DELETE_ALL_FILES():
+    """
+    Simple command that will delete all files
+    it will call datahandler function that will deal with it
+    """
+
+    try:
+        DH.delete_all_files()
+    except Exception as e:
+        return [f"error: {e}"]
+    return ["all files deleted"]
+
 
 def get_tx_message_header():
     """ " Helper function to obtain the tx message header to send back"""
