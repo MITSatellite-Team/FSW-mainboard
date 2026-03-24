@@ -345,21 +345,23 @@ def INIT_TRANS(tid, number_of_packets, hash_MSB, hash_LSB):
     # return a structured "not implemented" response to avoid breaking downstream handling
     return ["not_implemented"]
 
+
 @register_command()
 def LIST_DIR(skip_elements, string_command):
     """
     Try and list whatever is on the given directory
     the result will be sent as a string, skip_elements will skip the first x elements
     """
-    
+
     import os
-    
+
     try:
         file_list = os.listdir(string_command)
     except Exception as e:
         return [f"error: {e}"]
 
     return file_list[skip_elements:]
+
 
 @register_command()
 def DELETE_ALL_FILES():
@@ -373,6 +375,21 @@ def DELETE_ALL_FILES():
     except Exception as e:
         return [f"error: {e}"]
     return ["all files deleted"]
+
+
+@register_command()
+def UPDATE_SD_USAGE():
+    """
+    Calls the DH function to compute the sd card usage and update it on the DH
+    it will also return the current sd_usage
+    """
+
+    try:
+        DH.update_SD_usage()
+        usage = DH.SD_usage()
+    except Exception as e:
+        return [f"error: {e}"]
+    return ["sd usage updated", usage]
 
 
 def get_tx_message_header():
