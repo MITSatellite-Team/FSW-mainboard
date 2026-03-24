@@ -33,7 +33,6 @@ class Task(TemplateTask):
         "TIME",
         "GPS_MESSAGE_ID",
         "GPS_FIX_MODE",
-        "GPS_NUMBER_OF_SV",
         "GPS_GNSS_WEEK",
         "GPS_GNSS_TOW",
         "GPS_GDOP",
@@ -72,7 +71,6 @@ class Task(TemplateTask):
                         self.log_data[GPS_IDX.TIME_GPS] = int(SATELLITE.GPS.unix_time)
                         self.log_data[GPS_IDX.GPS_MESSAGE_ID] = int(SATELLITE.GPS.message_id)
                         self.log_data[GPS_IDX.GPS_FIX_MODE] = int(SATELLITE.GPS.fix_mode)
-                        self.log_data[GPS_IDX.GPS_NUMBER_OF_SV] = int(SATELLITE.GPS.number_of_sv)
                         self.log_data[GPS_IDX.GPS_GNSS_WEEK] = int(SATELLITE.GPS.week)
                         self.log_data[GPS_IDX.GPS_GNSS_TOW] = int(SATELLITE.GPS.tow)
                         self.log_data[GPS_IDX.GPS_GDOP] = int(SATELLITE.GPS.gdop)
