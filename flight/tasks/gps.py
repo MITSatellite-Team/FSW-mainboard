@@ -25,7 +25,7 @@ from micropython import const
     However, if the RTC is inactive, the TPM time reference should be updated for any valid fix, since it will always be
     better than the TPM's best-effort timekeeping.
 """
-_FIX_MODE_THR = const(3)
+_FIX_MODE_THR = const(3) # 3D Fix with S1216F8-GL
 
 
 class Task(TemplateTask):
@@ -35,11 +35,7 @@ class Task(TemplateTask):
         "GPS_FIX_MODE",
         "GPS_NUMBER_OF_SV",
         "GPS_GNSS_WEEK",
-        "GPS_GNSS_TOW",  # Time of week
-        "GPS_LATITUDE",
-        "GPS_LONGITUDE",
-        "GPS_ELLIPSOID_ALT",
-        "GPS_MEAN_SEA_LVL_ALT",
+        "GPS_GNSS_TOW",
         "GPS_GDOP",
         "GPS_PDOP",
         "GPS_HDOP",
@@ -71,22 +67,14 @@ class Task(TemplateTask):
 
                 # Check if the module sent a valid nav data message
                 if SATELLITE.GPS.update():
-                    # Check if the fix is at least a 2D fix (fix_mode >= 1)
+                    # Check if the fix is at least a 2D fix (fix_mode >= 2) 
                     if SATELLITE.GPS.has_fix():
-                        # If a valid message and a fix, update GPS log info
-                        self.log_info("GPS module got a valid fix")
-                        self.log_info(f"GPS ECEF: {self.log_data[GPS_IDX.GPS_ECEF_X:]}")
-
                         self.log_data[GPS_IDX.TIME_GPS] = int(SATELLITE.GPS.unix_time)
                         self.log_data[GPS_IDX.GPS_MESSAGE_ID] = int(SATELLITE.GPS.message_id)
                         self.log_data[GPS_IDX.GPS_FIX_MODE] = int(SATELLITE.GPS.fix_mode)
                         self.log_data[GPS_IDX.GPS_NUMBER_OF_SV] = int(SATELLITE.GPS.number_of_sv)
                         self.log_data[GPS_IDX.GPS_GNSS_WEEK] = int(SATELLITE.GPS.week)
                         self.log_data[GPS_IDX.GPS_GNSS_TOW] = int(SATELLITE.GPS.tow)
-                        self.log_data[GPS_IDX.GPS_LATITUDE] = int(SATELLITE.GPS.latitude)
-                        self.log_data[GPS_IDX.GPS_LONGITUDE] = int(SATELLITE.GPS.longitude)
-                        self.log_data[GPS_IDX.GPS_ELLIPSOID_ALT] = int(SATELLITE.GPS.ellipsoid_altitude)
-                        self.log_data[GPS_IDX.GPS_MEAN_SEA_LVL_ALT] = int(SATELLITE.GPS.mean_sea_level_altitude)
                         self.log_data[GPS_IDX.GPS_GDOP] = int(SATELLITE.GPS.gdop)
                         self.log_data[GPS_IDX.GPS_PDOP] = int(SATELLITE.GPS.pdop)
                         self.log_data[GPS_IDX.GPS_HDOP] = int(SATELLITE.GPS.hdop)
@@ -99,6 +87,10 @@ class Task(TemplateTask):
                         self.log_data[GPS_IDX.GPS_ECEF_VY] = int(SATELLITE.GPS.ecef_vy)
                         self.log_data[GPS_IDX.GPS_ECEF_VZ] = int(SATELLITE.GPS.ecef_vz)
 
+                        # Log the current sample after log_data has been updated.
+                        self.log_info("GPS module got a valid fix")
+                        self.log_info(f"GPS ECEF: {self.log_data[GPS_IDX.GPS_ECEF_X:]}")
+
                         DH.log_data("gps", self.log_data)
 
                         # If RTC is inactive, set the TPM time reference regardless of fix quality
@@ -106,7 +98,7 @@ class Task(TemplateTask):
                             TPM.set_time_reference(SATELLITE.GPS.unix_time)
 
                         # Only update RTC time if the fix is better than _FIX_MODE_THR
-                        if SATELLITE.GPS.fix_mode > _FIX_MODE_THR:
+                        if SATELLITE.GPS.fix_mode >= _FIX_MODE_THR:
                             TPM.set_time(SATELLITE.GPS.unix_time)
 
                     else:
@@ -119,7 +111,10 @@ class Task(TemplateTask):
 
                 else:
                     # Did not get a valid nav data message
-                    self.log_info("GPS module did not send a valid nav data message")
+                    reason = SATELLITE.GPS.last_update_status
+                    if reason is None:
+                        reason = "GPS module did not send a valid nav data message"
+                    self.log_info(reason)
 
             else:
                 # GPS is not active in HAL

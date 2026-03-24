@@ -340,7 +340,9 @@ class ArgusV4(CubeSat):
         from hal.drivers.gps import GPS
 
         try:
-            gps = GPS(ArgusV4Components.GPS_UART, None, False, False)  # TODO GPS Enable is obsolete
+            gps = GPS(
+                uart=ArgusV4Components.GPS_UART, debug=False
+            )  # Enable doesn't effect GPS since it is not powered by GPIO, mock is unused
 
             return [gps, Errors.NO_ERROR]
         except Exception as e:
