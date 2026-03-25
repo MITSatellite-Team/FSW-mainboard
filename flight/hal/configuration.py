@@ -11,4 +11,3 @@ SATELLITE: CubeSat = None
 from hal.argus_v4 import ArgusV4
 
 SATELLITE = ArgusV4(debug=DEBUG_MODE)
-
