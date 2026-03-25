@@ -27,7 +27,6 @@ class Frame:
     maybe will use this for more than telemetry later on
     """
 
-
     @classmethod
     def get_dh_latest_data(cls, ss):
         """
