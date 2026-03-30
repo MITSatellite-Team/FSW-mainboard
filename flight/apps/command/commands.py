@@ -21,14 +21,12 @@ Author: Ibrahima S. Sow
 """
 
 import supervisor
-from apps.command.constants import file_tags_str
 from apps.comms.fifo import QUEUE_STATUS, TransmitQueue
 from apps.telemetry.middleware import Frame as TelemetryFrame  # this will substitute for the old telemetry packer
 from apps.telemetry.splat.splat.telemetry_codec import Command
 from apps.telemetry.splat.splat.transport_layer import transaction_manager as TM
 from core import logger
 from core import state_manager as SM
-from core.data_handler import DataHandler as DH
 from core.states import STR_STATES
 from core.time_processor import TimeProcessor as TPM
 
@@ -153,51 +151,6 @@ def REQUEST_TM_PAYLOAD():
     logger.info(f"Telemetry payload packed and pushed to transmit queue {q_stat}")
 
     return [q_stat]  # return the queue status number
-
-
-@register_command()
-def REQUEST_FILE_METADATA(file_id, file_time=None):
-    """Requests metadata for a specific file from the spacecraft."""
-    logger.info(f"Executing REQUEST_FILE_METADATA with file_tag: {file_id} and file_time: {file_time}")
-    file_path = None
-    file_tag = file_tags_str[file_id]
-
-    if file_time is None or file_time == 0:
-        # None or 0 means get the latest file
-        file_path = DH.request_TM_path(file_tag, True)
-    else:
-        # Specify file_tag, latest = False and file_time
-        file_path = DH.request_TM_path(file_tag, False, file_time)
-
-    return [file_path]
-
-
-# NOTE: REQUEST_FILE_PKT handled internally in comms
-@register_command()
-def REQUEST_FILE_PKT(file_id, file_time):
-    raise NotImplementedError("Handled internally by comms subsystem")
-
-
-@register_command()
-def REQUEST_IMAGE():
-    raise NotImplementedError("Not implemented")
-
-
-@register_command()
-def DOWNLINK_ALL(file_id, file_time=None):
-    """Downlinks all packets for a specific file from the spacecraft."""
-    logger.info(f"Executing DOWNLINK_ALL with file_tag: {file_id} and file_time: {file_time}")
-    file_path = None
-    file_tag = file_tags_str[file_id]
-
-    if file_time is None or file_time == 0:
-        # None or 0 means get the latest file
-        file_path = DH.request_TM_path(file_tag)
-    else:
-        # Specify file_tag, latest = False and file_time
-        file_path = DH.request_TM_path(file_tag, False, file_time)
-
-    return [file_path]
 
 
 @register_command()
@@ -344,8 +297,3 @@ def INIT_TRANS(tid, number_of_packets, hash_MSB, hash_LSB):
     # no need to implement now, this will only be needed if sending transactions from the gs to sat
     # return a structured "not implemented" response to avoid breaking downstream handling
     return ["not_implemented"]
-
-
-def get_tx_message_header():
-    """ " Helper function to obtain the tx message header to send back"""
-    return int.from_bytes(TelemetryFrame.FRAME()[0:1], "big")
