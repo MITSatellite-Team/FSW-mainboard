@@ -132,7 +132,7 @@ class GPS:
         # These values are used for logging and will be ints
         self.timestamp_utc = None  # UTC as a dictionary in the form {year, month, day, hour, minute, second}
 
-        self.unix_time = 0  # Unix time in seconds, type: float = float (f), unit: seconds
+        self.unix_time = 0  # Unix time in whole seconds, type: int, unit: seconds
 
         ## For AN0030: Binary Protocol
         self.message_id = 0  # Field 1, type: uint8, unit: N/A
@@ -432,16 +432,14 @@ class GPS:
     def _is_leap_year(self, year):
             return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
-    def _gps_time_2_unix_time(self, gps_week: int, tow: float) -> float:
+    def _gps_time_2_unix_time(self, gps_week: int, tow: float) -> int:
         # Number of days in each month (non-leap year)
         days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
-        # Split TOW into whole-day and sub-day components
-        tow_day_offset = int(tow // 86400)
-        seconds_in_day = tow - (tow_day_offset * 86400)
-
-        # Calculate the total number of days from GPS week and TOW day rollover
-        total_days = gps_week * 7 + tow_day_offset
+        # Keep Unix timestamps integer-only so large epoch values do not lose
+        # second-level precision on the flight target before they reach the RTC.
+        total_gps_seconds = gps_week * 7 * 86400 + int(tow + 0.5)
+        total_days, seconds_in_day = divmod(total_gps_seconds, 86400)
 
         # Start from the epoch date and add total days
         year = EPOCH_YEAR
@@ -477,8 +475,8 @@ class GPS:
         unix_time = days_since_unix_epoch * 86400 + seconds_in_day
 
         # Calculate hours, minutes, and seconds
-        hours = int(seconds_in_day // 3600)
-        minutes = int((seconds_in_day % 3600) // 60)
+        hours = seconds_in_day // 3600
+        minutes = (seconds_in_day % 3600) // 60
         seconds = seconds_in_day % 60
 
         self.timestamp_utc = {
@@ -487,7 +485,7 @@ class GPS:
             "day": day,
             "hour": hours,
             "minute": minutes,
-            "second": round(seconds, 2),
+            "second": seconds,
         }
 
         # Return the unix time
