@@ -28,12 +28,21 @@ except ImportError:
 EPOCH_YEAR = 1980
 EPOCH_MONTH = 1
 EPOCH_DAY = 6
+_FRAME_START = b"\xA0\xA1"
+_FRAME_END = b"\x0D\x0A"
+_MIN_FRAME_LEN = 8
+_MAX_FRAME_PAYLOAD_LEN = 256
+_MAX_RX_BUFFER_LEN = 4096
 
 
 class GPS:
-    def __init__(self, uart: UART, enable = None, debug: bool = False) -> None:
+    def __init__(self, uart: UART, enable = None, debug: bool = False, rx_buffer_size: Optional[int] = None) -> None:
         self._uart = uart
         self._debug = debug
+        if rx_buffer_size is None or int(rx_buffer_size) < _MIN_FRAME_LEN:
+            self._max_rx_buffer_len = _MAX_RX_BUFFER_LEN
+        else:
+            self._max_rx_buffer_len = int(rx_buffer_size)
         self._enable = (
             None  # Enable pin is only used on older ARGUS boards, this does nothing but is a papertrail for deinit in HAL
         )
@@ -111,6 +120,7 @@ class GPS:
         self._msg_id = 0
         self._msg_cs = 0
         self.last_update_status = None
+        self._rx_buffer = bytearray()
 
         ################################################
         # HELPER FLAGS
@@ -166,11 +176,11 @@ class GPS:
     def update(self) -> bool:
         self.last_update_status = None
 
-        if not self._collect_message():
-            return False
-
         ## CONFIGURE THE RECEIVER (Once-per-cycle flags)
         self._use_helper_functions()
+
+        if not self._collect_message():
+            return False
 
         if not self._validate_message():
             return False
@@ -704,10 +714,68 @@ class GPS:
     def read(self, nbytes: int) -> Optional[bytes]:
         return self._uart.read(nbytes)
 
+    def _read_available_bytes(self) -> None:
+        while self._in_waiting > 0:
+            chunk = self.read(self._in_waiting)
+            if not chunk:
+                return
+            self._rx_buffer.extend(chunk)
+
+        if len(self._rx_buffer) > self._max_rx_buffer_len:
+            del self._rx_buffer[:-self._max_rx_buffer_len]
+
+    def _extract_frame(self) -> Optional[bytes]:
+        while len(self._rx_buffer) >= 2:
+            start_idx = self._rx_buffer.find(_FRAME_START)
+            if start_idx < 0:
+                if len(self._rx_buffer) > 1:
+                    del self._rx_buffer[:-1]
+                return None
+
+            if start_idx > 0:
+                del self._rx_buffer[:start_idx]
+
+            if len(self._rx_buffer) < 4:
+                return None
+
+            payload_len = (self._rx_buffer[2] << 8) | self._rx_buffer[3]
+            if payload_len == 0 or payload_len > _MAX_FRAME_PAYLOAD_LEN:
+                del self._rx_buffer[0]
+                continue
+
+            frame_len = payload_len + 7
+            if len(self._rx_buffer) < frame_len:
+                return None
+
+            if bytes(self._rx_buffer[frame_len - 2 : frame_len]) != _FRAME_END:
+                del self._rx_buffer[0]
+                continue
+
+            frame = bytes(self._rx_buffer[:frame_len])
+            del self._rx_buffer[:frame_len]
+            return frame
+
+        return None
+
     def read_sentence(self) -> Optional[bytes]:
-        if self._in_waiting < 8:
+        self._read_available_bytes()
+
+        if len(self._rx_buffer) < _MIN_FRAME_LEN:
             return None
-        return self._uart.readline()
+
+        latest_frame = None
+        latest_nav_frame = None
+
+        while True:
+            frame = self._extract_frame()
+            if frame is None:
+                break
+
+            latest_frame = frame
+            if len(frame) >= 5 and frame[4] in (0xA8, 0xDF):
+                latest_nav_frame = frame
+
+        return latest_nav_frame or latest_frame
 
     ######################## ERROR HANDLING ########################
 
