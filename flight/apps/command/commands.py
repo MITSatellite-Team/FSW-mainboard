@@ -390,8 +390,3 @@ def UPDATE_SD_USAGE():
     except Exception as e:
         return [f"error: {e}"]
     return ["sd usage updated", usage]
-
-
-def get_tx_message_header():
-    """ " Helper function to obtain the tx message header to send back"""
-    return int.from_bytes(TelemetryFrame.FRAME()[0:1], "big")
