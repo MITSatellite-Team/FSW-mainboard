@@ -182,9 +182,6 @@ class GPS:
         if not self._collect_message():
             return False
 
-        if not self._validate_message():
-            return False
-
         if not self._parse_message_header():
             return False
 
@@ -249,11 +246,6 @@ class GPS:
             return False
         return True
 
-    def _validate_message(self) -> bool:
-        if self._msg[0] != 0xA0 or self._msg[1] != 0xA1:
-            self.last_update_status = f"Invalid start bytes, expected 0xA0 0xA1, got: {hex(self._msg[0])} {hex(self._msg[1])}"
-            return False
-        return True
 
     def _parse_message_header(self) -> bool:
         try:
