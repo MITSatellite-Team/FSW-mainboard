@@ -33,6 +33,8 @@ _FRAME_END = b"\x0D\x0A"
 _MIN_FRAME_LEN = 8
 _MAX_FRAME_PAYLOAD_LEN = 256
 _MAX_RX_BUFFER_LEN = 4096
+_RX_BUFFER_WARN_FRACTION = 4 # Warn if buffer is 1/{this value} of max length
+_GPS_UTC_OFFSET_SECONDS = 18 # GPS Counts leap seconds, there are 18 as of June 2026
 
 
 class GPS:
@@ -56,7 +58,7 @@ class GPS:
         ################################################
 
         # NOTE: ENSURE THE BOARD IS SET TO S1216F8-GL BEFORE FLIGHT
-        self._board = "S1216F8-GL"  # "PX1120S" Defaulting to the flight module, otherwise needs to be set to PX1120S
+        self._board = "PX1120S" #"S1216F8-GL"  # "PX1120S" Defaulting to the flight module, otherwise needs to be set to PX1120S
         self._board_detected = True  # This is set to true with hardcoded board type regardless, _check_board_type is removed from update()
         self._ordered_keys_map = {
             "PX1120S": [
@@ -430,7 +432,6 @@ class GPS:
         else:
             return False
 
-    # Helper function to check for leap years
     def _is_leap_year(self, year):
             return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
@@ -438,10 +439,9 @@ class GPS:
         # Number of days in each month (non-leap year)
         days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
-        # Keep Unix timestamps integer-only so large epoch values do not lose
-        # second-level precision on the flight target before they reach the RTC.
-        total_gps_seconds = gps_week * 7 * 86400 + int(tow + 0.5)
-        total_days, seconds_in_day = divmod(total_gps_seconds, 86400)
+        total_gps_seconds = gps_week * 7 * 86400 + int(tow)
+        total_utc_seconds = total_gps_seconds - _GPS_UTC_OFFSET_SECONDS
+        total_days, seconds_in_day = divmod(total_utc_seconds, 86400)
 
         # Start from the epoch date and add total days
         year = EPOCH_YEAR
@@ -706,33 +706,56 @@ class GPS:
     def read(self, nbytes: int) -> Optional[bytes]:
         return self._uart.read(nbytes)
 
+    def _discard_rx_prefix(self, count: int) -> None:
+        if count <= 0:
+            return
+        self._rx_buffer = bytearray(self._rx_buffer[count:])
+
+    def _keep_rx_suffix(self, count: int) -> None:
+        if count <= 0:
+            self._rx_buffer = bytearray()
+            return
+        self._rx_buffer = bytearray(self._rx_buffer[-count:])
+
+    def _log_rx_buffer_size(self) -> None:
+        buffer_len = len(self._rx_buffer)
+        if self._debug:
+            self._log("debug", f"RX buffer size: {buffer_len}/{self._max_rx_buffer_len}")
+
+        warn_threshold = self._max_rx_buffer_len - max(1, self._max_rx_buffer_len // _RX_BUFFER_WARN_FRACTION)
+        if buffer_len >= warn_threshold:
+            self._log("warning", f"RX buffer nearing limit: {buffer_len}/{self._max_rx_buffer_len}")
+
     def _read_available_bytes(self) -> None:
         while self._in_waiting > 0:
             chunk = self.read(self._in_waiting)
             if not chunk:
                 return
             self._rx_buffer.extend(chunk)
+            self._log_rx_buffer_size()
 
         if len(self._rx_buffer) > self._max_rx_buffer_len:
-            del self._rx_buffer[:-self._max_rx_buffer_len]
+            self._log("warning", f"RX buffer exceeded limit, trimming to {self._max_rx_buffer_len} bytes")
+            self._keep_rx_suffix(self._max_rx_buffer_len)
+            self._log_rx_buffer_size()
 
     def _extract_frame(self) -> Optional[bytes]:
         while len(self._rx_buffer) >= 2:
             start_idx = self._rx_buffer.find(_FRAME_START)
             if start_idx < 0:
                 if len(self._rx_buffer) > 1:
-                    del self._rx_buffer[:-1]
+                    self._keep_rx_suffix(1)
                 return None
 
             if start_idx > 0:
-                del self._rx_buffer[:start_idx]
+                self._discard_rx_prefix(start_idx)
 
             if len(self._rx_buffer) < 4:
                 return None
 
             payload_len = (self._rx_buffer[2] << 8) | self._rx_buffer[3]
             if payload_len == 0 or payload_len > _MAX_FRAME_PAYLOAD_LEN:
-                del self._rx_buffer[0]
+                self._discard_rx_prefix(1)
                 continue
 
             frame_len = payload_len + 7
@@ -740,11 +763,11 @@ class GPS:
                 return None
 
             if bytes(self._rx_buffer[frame_len - 2 : frame_len]) != _FRAME_END:
-                del self._rx_buffer[0]
+                self._discard_rx_prefix(1)
                 continue
 
             frame = bytes(self._rx_buffer[:frame_len])
-            del self._rx_buffer[:frame_len]
+            self._discard_rx_prefix(frame_len)
             return frame
 
         return None
