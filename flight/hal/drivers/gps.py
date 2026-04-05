@@ -58,7 +58,7 @@ class GPS:
         ################################################
 
         # NOTE: ENSURE THE BOARD IS SET TO S1216F8-GL BEFORE FLIGHT
-        self._board = "PX1120S" #"S1216F8-GL"  # "PX1120S" Defaulting to the flight module, otherwise needs to be set to PX1120S
+        self._board = "S1216F8-GL"  # "PX1120S" Defaulting to the flight module, otherwise needs to be set to PX1120S
         self._board_detected = True  # This is set to true with hardcoded board type regardless, _check_board_type is removed from update()
         self._ordered_keys_map = {
             "PX1120S": [
