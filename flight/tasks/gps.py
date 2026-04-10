@@ -10,21 +10,25 @@ from hal.configuration import SATELLITE
 from micropython import const
 
 """
-    Fix Modes in GPS NMEA Message:
+    Fix Modes in GPS Message:
+    For the S1216F8-GL Flight Module, the value of the fix mode is as follows in the AN0030 protocol:
+    Quality of fix of S1216F8-GL:
+        00: NO_FIX,
+        01: FIX_PREDICTION
+        02: FIX_2D
+        03: FIX_3D
+        04: FIX_DIFFERENTIAL
 
-    0 - No fix: The GPS receiver has not obtained a valid fix or has lost the fix.
-    1 - GPS fix: A 2D fix is available (latitude and longitude, but altitude is not necessarily reliable).
-    2 - Differential GPS fix: A 2D fix is available, with differential corrections applied for improved accuracy.
-    3 - 3D fix: A 3D fix is available (latitude, longitude, and altitude are all valid and reliable).
-    4 - GNSS fix: A fix using signals from multiple GNSS systems (e.g., GPS, GLONASS, Galileo, BeiDou).
-    5 - Time fix: A fix based on time synchronization, typically used in high-precision or timing applications.
+    For the PX1120S Module, the value is as follows in the AN0037 protocol:
+    Quality of fix of PX1120:
+        0: no fix
+        1: 2D
+        2: 3D
+        3: 3D+DGNSS
 
-    For updating the RTC's time reference, a fix mode of at least 3 should be used, to guarantee accurate time setting.
-    The RTC does not have a very high drift over time, so unnecessary updates from bad GPS fixes should be avoided.
-
-    However, if the RTC is inactive, the TPM time reference should be updated for any valid fix, since it will always be
-    better than the TPM's best-effort timekeeping.
+    NOTE: For the PX1120S, _FIX_MODE_THR should be set to 2 for replicate the same fix_mode as S1216F8-GL
 """
+
 _FIX_MODE_THR = const(3) # 3D Fix with S1216F8-GL
 
 
@@ -48,7 +52,7 @@ class Task(TemplateTask):
         "GPS_ECEF_VZ",
     ]"""
 
-    log_data = [0] * 21
+    log_data = [0] * 18
 
     def __init__(self, id):
         super().__init__(id)
@@ -61,7 +65,7 @@ class Task(TemplateTask):
         else:
             if SATELLITE.GPS_AVAILABLE:
                 if not DH.data_process_exists("gps"):
-                    data_format = "LBBBHLllllHHHHHllllll"
+                    data_format = "LBBIBHIHHHHHllllll"
                     DH.register_data_process("gps", data_format, True, data_limit=100000, write_interval=1)
 
                 # Check if the module sent a valid nav data message
@@ -71,6 +75,8 @@ class Task(TemplateTask):
                         self.log_data[GPS_IDX.TIME_GPS] = int(SATELLITE.GPS.unix_time)
                         self.log_data[GPS_IDX.GPS_MESSAGE_ID] = int(SATELLITE.GPS.message_id)
                         self.log_data[GPS_IDX.GPS_FIX_MODE] = int(SATELLITE.GPS.fix_mode)
+                        self.log_data[GPS_IDX.GPS_LAST_FIX_TIME] = int(SATELLITE.GPS.unix_time)
+                        self.log_data[GPS_IDX.GPS_LAST_FIX_MODE] = int(SATELLITE.GPS.fix_mode)
                         self.log_data[GPS_IDX.GPS_GNSS_WEEK] = int(SATELLITE.GPS.week)
                         self.log_data[GPS_IDX.GPS_GNSS_TOW] = int(SATELLITE.GPS.tow)
                         self.log_data[GPS_IDX.GPS_GDOP] = int(SATELLITE.GPS.gdop)
@@ -105,7 +111,6 @@ class Task(TemplateTask):
                     # Log info
                     self.log_info(f"GPS Time: {self.log_data[GPS_IDX.TIME_GPS]}")
                     self.log_info(f"GPS Fix Mode: {self.log_data[GPS_IDX.GPS_FIX_MODE]}")
-                    self.log_info(f"Number of SV: {self.log_data[GPS_IDX.GPS_NUMBER_OF_SV]}")
 
                 else:
                     # Did not get a valid nav data message
