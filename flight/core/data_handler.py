@@ -42,6 +42,7 @@ import re
 import struct
 
 from core.logging import logger
+from core.satellite_config import feature_flags_config as FEATURES
 from core.time_processor import TimeProcessor as TPM
 from micropython import const
 
@@ -985,6 +986,7 @@ class DataHandler:
     _SD_SCANNED = False
     _SD_USAGE = 0
     SD_ERROR_FLAG = False
+    _SD_UNAVAILABLE_WARNED = False
     REBOOT_IN_PROGRESS = False  # Flag to prevent logging during peripheral reboot
 
     # Keep track of all file processes
@@ -1031,6 +1033,11 @@ class DataHandler:
         Example:
             DataHandler.scan_SD_card()
         """
+        if not FEATURES.ENABLE_SD_CARD:
+            cls.SD_ERROR_FLAG = True
+            cls._SD_SCANNED = True
+            return
+
         if not cls.__can_write_to_path(_HOME_PATH):
             # The SD card path has an issue
             cls.SD_ERROR_FLAG = True
@@ -1125,15 +1132,16 @@ class DataHandler:
             cls.data_process_registry[tag_name] = DataProcess(
                 tag_name,
                 data_format,
-                persistent=persistent if cls.SD_ERROR_FLAG is False else False,
+                persistent=persistent if (FEATURES.ENABLE_SD_CARD and cls.SD_ERROR_FLAG is False) else False,
                 data_limit=data_limit,
                 write_interval=write_interval,
                 circular_buffer_size=circular_buffer_size,
                 retrieve_latest_data=retrieve_latest_data,
                 append_to_current=append_to_current,
             )
-            if cls.SD_ERROR_FLAG:
+            if FEATURES.ENABLE_SD_CARD and cls.SD_ERROR_FLAG and not cls._SD_UNAVAILABLE_WARNED:
                 logger.warning(f"Data process {tag_name} not persistent due to SD card error.")
+                cls._SD_UNAVAILABLE_WARNED = True
         else:
             raise ValueError("Data limit must be a positive integer.")
 
@@ -1159,6 +1167,15 @@ class DataHandler:
         Returns:
         - None
         """
+        if not FEATURES.ENABLE_SD_CARD:
+            return
+
+        if cls.SD_ERROR_FLAG:
+            if not cls._SD_UNAVAILABLE_WARNED:
+                logger.warning(f"File process {tag_name} not registered because persistent storage is unavailable.")
+                cls._SD_UNAVAILABLE_WARNED = True
+            return
+
         try:
             cls.data_process_registry[tag_name] = FileProcess(
                 tag_name=tag_name,
@@ -1169,8 +1186,9 @@ class DataHandler:
             )
         except Exception as e:
             logger.error(f"Failed to register file process '{tag_name}': {e}")
-            if cls.SD_ERROR_FLAG:
+            if FEATURES.ENABLE_SD_CARD and cls.SD_ERROR_FLAG and not cls._SD_UNAVAILABLE_WARNED:
                 logger.warning(f"File process {tag_name} not registered due to SD card error.")
+                cls._SD_UNAVAILABLE_WARNED = True
 
     @classmethod
     def log_data(cls, tag_name: str, data: List) -> None:

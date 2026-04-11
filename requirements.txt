@@ -1,4 +1,6 @@
 numpy>=1.23.5
+matplotlib>=3.7
+pyserial>=3.5
 pytest>=7.4.3
 mypy
 pybind11-stubgen

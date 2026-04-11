@@ -40,6 +40,19 @@ def read_magnetometer() -> tuple[int, np.ndarray]:
         return StatusConst.MAG_FAIL, np.zeros((3,))
 
 
+def read_accelerometer() -> np.ndarray:
+    """
+    - Reads the linear acceleration from the IMU in m/s^2
+    """
+
+    if SATELLITE.IMU_AVAILABLE:
+        accel = np.array(SATELLITE.IMU.accel())
+        if accel is None or len(accel) != 3:
+            return np.zeros((3,))
+        return accel
+    return np.zeros((3,))
+
+
 def read_sun_position() -> tuple[int, np.ndarray, np.ndarray]:
     """
     - Gets the measured sun vector from light sensor measurements

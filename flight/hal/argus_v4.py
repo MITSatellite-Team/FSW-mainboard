@@ -8,6 +8,7 @@ import time
 import board
 import digitalio
 from busio import I2C, SPI, UART
+from core.satellite_config import feature_flags_config as FEATURES
 from hal.cubesat import ASIL0, ASIL1, ASIL2, ASIL3, ASIL4, CubeSat
 from hal.drivers.errors import Errors
 from hal.drivers.objectWrapper import objectWrapper
@@ -355,6 +356,13 @@ class ArgusV4(CubeSat):
 
         from hal.drivers.adm1176 import ADM1176
 
+        if location == "BOARD_PWR" and not FEATURES.ENABLE_BOARD_POWER_MONITOR:
+            return [None, Errors.NO_ERROR]
+        if location == "JETSON_PWR" and not FEATURES.ENABLE_JETSON_POWER_MONITOR:
+            return [None, Errors.NO_ERROR]
+        if location in ("XP_PWR", "XM_PWR", "YP_PWR", "YM_PWR", "ZP_PWR") and not FEATURES.ENABLE_SOLAR_POWER_MONITORS:
+            return [None, Errors.NO_ERROR]
+
         locations = {
             "BOARD_PWR": [ArgusV4Components.BOARD_POWER_MONITOR_I2C_ADDRESS, ArgusV4Components.BOARD_POWER_MONITOR_I2C],
             "RADIO_PWR": [ArgusV4Components.RADIO_POWER_MONITOR_I2C_ADDRESS, ArgusV4Components.RADIO_POWER_MONITOR_I2C],
@@ -421,6 +429,9 @@ class ArgusV4(CubeSat):
 
         :return: List of error codes for each torque driver in the order of directions
         """
+        if not FEATURES.ENABLE_TORQUE_DRIVERS:
+            return [None, Errors.NO_ERROR]
+
         directions = {
             "TORQUE_XP": [ArgusV4Components.TORQUE_XP_I2C_ADDRESS, ArgusV4Components.TORQUE_COILS_XP_I2C],
             "TORQUE_XM": [ArgusV4Components.TORQUE_XM_I2C_ADDRESS, ArgusV4Components.TORQUE_COILS_XM_I2C],
@@ -450,6 +461,9 @@ class ArgusV4(CubeSat):
 
         :return: List of error codes for each sensor in the order of directions
         """
+        if not FEATURES.ENABLE_LIGHT_SENSORS:
+            return [None, Errors.NO_ERROR]
+
         directions = {
             "LIGHT_XP": [ArgusV4Components.LIGHT_SENSOR_XP_I2C_ADDRESS, ArgusV4Components.LIGHT_SENSOR_XP_I2C],
             "LIGHT_XM": [ArgusV4Components.LIGHT_SENSOR_XM_I2C_ADDRESS, ArgusV4Components.LIGHT_SENSOR_XM_I2C],
@@ -546,6 +560,8 @@ class ArgusV4(CubeSat):
 
     def __sd_card_boot(self, _) -> list[object, int]:
         """sd_card_boot: Boot sequence for the SD card"""
+        if not FEATURES.ENABLE_SD_CARD:
+            return [None, Errors.NO_ERROR]
 
         from hal.drivers.sdcard import CustomVfsFat
 
@@ -568,6 +584,9 @@ class ArgusV4(CubeSat):
         """burn_wire_boot: Boot sequence for the burn wires"""
         from hal.drivers.pca9633 import PCA9633
 
+        if not FEATURES.ENABLE_DEPLOYMENT:
+            return [None, Errors.NO_ERROR]
+
         try:
             burn_wires = PCA9633(
                 ArgusV4Components.BURN_WIRE_I2C,
@@ -584,6 +603,9 @@ class ArgusV4(CubeSat):
         """fuel_gauge_boot: Boot sequence for the fuel gauge"""
 
         from hal.drivers.max17205 import MAX17205
+
+        if not FEATURES.ENABLE_FUEL_GAUGE:
+            return [None, Errors.NO_ERROR]
 
         try:
             fuel_gauge = MAX17205(
@@ -620,6 +642,9 @@ class ArgusV4(CubeSat):
         """battery_heaters_boot: Boot sequence for the battery heaters"""
         from hal.drivers.batteryheaters import BatteryHeaters
 
+        if not FEATURES.ENABLE_BATTERY_HEATERS:
+            return [None, Errors.NO_ERROR]
+
         try:
             battery_heaters = BatteryHeaters(
                 ArgusV4Power.BATT_HEAT_EN,
@@ -652,6 +677,9 @@ class ArgusV4(CubeSat):
     def __deployment_sensor_boot(self, direction) -> list[object, int]:
         """deployment_sensor_boot: Boot sequence for the deployment sensor"""
         from hal.drivers.vl53l4cd import VL53L4CD
+
+        if not FEATURES.ENABLE_DEPLOYMENT:
+            return [None, Errors.NO_ERROR]
 
         directions = {
             "DEPLOYMENT_XP": [ArgusV4Components.DEPLOYMENT_SENSOR_XP_I2C, ArgusV4Components.DEPLOYMENT_SENSOR_XP_I2C_ADDRESS],

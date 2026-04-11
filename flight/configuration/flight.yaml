@@ -30,6 +30,29 @@ main:
   LOG_LEVEL:
     value: "WARNING"
 
+# Build-time feature flags
+feature_flags:
+  ENABLE_PAYLOAD:
+    value: true
+  ENABLE_SD_CARD:
+    value: true
+  ENABLE_LIGHT_SENSORS:
+    value: true
+  ENABLE_DEPLOYMENT:
+    value: true
+  ENABLE_BATTERY_HEATERS:
+    value: true
+  ENABLE_FUEL_GAUGE:
+    value: true
+  ENABLE_TORQUE_DRIVERS:
+    value: true
+  ENABLE_BOARD_POWER_MONITOR:
+    value: true
+  ENABLE_JETSON_POWER_MONITOR:
+    value: true
+  ENABLE_SOLAR_POWER_MONITORS:
+    value: true
+
 # HAL Monitor Task
 hal_monitor:
   REGULAR_REBOOT:

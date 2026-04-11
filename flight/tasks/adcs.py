@@ -7,6 +7,7 @@ from core import DataHandler as DH
 from core import TemplateTask
 from core import state_manager as SM
 from core.dh_constants import ADCS_IDX, CDH_IDX, class_length
+from core.satellite_config import feature_flags_config as FEATURES
 from core.states import STATES
 from core.time_processor import TimeProcessor as TPM
 from ulab import numpy as np
@@ -16,6 +17,7 @@ from ulab import numpy as np
         - ADCS Task runs at 5 Hz (TBD if we can't handle this)
 """
 _IDX_LENGTH = class_length(ADCS_IDX)
+_LIGHT_SENSORS_ENABLED = FEATURES.ENABLE_LIGHT_SENSORS
 
 
 class Task(TemplateTask):
@@ -58,6 +60,7 @@ class Task(TemplateTask):
     # Sensor Data storage
     gyro_status = StatusConst.OK
     gyro_data = np.zeros((3,))
+    accel_data = np.zeros((3,))
 
     mag_status = StatusConst.OK
     mag_data = np.zeros((3,))
@@ -83,6 +86,7 @@ class Task(TemplateTask):
 
             self.time = TPM.time()
             self.log_data[ADCS_IDX.TIME_ADCS] = self.time
+            self.accel_data = sensors.read_accelerometer()
 
             # ------------------------------------------------------------------------------------------------------------------------------------
             # DETUMBLING
@@ -214,19 +218,34 @@ class Task(TemplateTask):
         self.log_data[ADCS_IDX.MAG_X] = self.mag_data[0]
         self.log_data[ADCS_IDX.MAG_Y] = self.mag_data[1]
         self.log_data[ADCS_IDX.MAG_Z] = self.mag_data[2]
-        self.log_data[ADCS_IDX.SUN_STATUS] = int(self.sun_status)
-        self.log_data[ADCS_IDX.SUN_VEC_X] = self.sun_pos_body[0]
-        self.log_data[ADCS_IDX.SUN_VEC_Y] = self.sun_pos_body[1]
-        self.log_data[ADCS_IDX.SUN_VEC_Z] = self.sun_pos_body[2]
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_XM] = int(self.sun_lux[0]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_XP] = int(self.sun_lux[1]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_YM] = int(self.sun_lux[2]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_YP] = int(self.sun_lux[3]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_ZM] = int(self.sun_lux[4]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_1] = int(self.sun_lux[5]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_2] = int(self.sun_lux[6]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_3] = int(self.sun_lux[7]) & 0xFFFF
-        self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_4] = int(self.sun_lux[8]) & 0xFFFF
+        if _LIGHT_SENSORS_ENABLED:
+            self.log_data[ADCS_IDX.SUN_STATUS] = int(self.sun_status)
+            self.log_data[ADCS_IDX.SUN_VEC_X] = self.sun_pos_body[0]
+            self.log_data[ADCS_IDX.SUN_VEC_Y] = self.sun_pos_body[1]
+            self.log_data[ADCS_IDX.SUN_VEC_Z] = self.sun_pos_body[2]
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_XM] = int(self.sun_lux[0]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_XP] = int(self.sun_lux[1]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_YM] = int(self.sun_lux[2]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_YP] = int(self.sun_lux[3]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZM] = int(self.sun_lux[4]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_1] = int(self.sun_lux[5]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_2] = int(self.sun_lux[6]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_3] = int(self.sun_lux[7]) & 0xFFFF
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_4] = int(self.sun_lux[8]) & 0xFFFF
+        else:
+            self.log_data[ADCS_IDX.SUN_STATUS] = 0
+            self.log_data[ADCS_IDX.SUN_VEC_X] = 0
+            self.log_data[ADCS_IDX.SUN_VEC_Y] = 0
+            self.log_data[ADCS_IDX.SUN_VEC_Z] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_XM] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_XP] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_YM] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_YP] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZM] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_1] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_2] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_3] = 0
+            self.log_data[ADCS_IDX.LIGHT_SENSOR_ZP_4] = 0
         self.log_data[ADCS_IDX.XP_COIL_STATUS] = int(self.coil_status[0])
         self.log_data[ADCS_IDX.XM_COIL_STATUS] = int(self.coil_status[1])
         self.log_data[ADCS_IDX.YP_COIL_STATUS] = int(self.coil_status[2])
@@ -238,10 +257,12 @@ class Task(TemplateTask):
         # Log Gyro Angular Velocities
         self.log_info(f"ADCS Mode : {self.MODE}")
         self.log_info(f"Gyro Ang Vel : {self.gyro_data}")
+        self.log_info(f"Accel : {self.accel_data}")
         # [TODO:] Remove later
         self.log_info(f"Mag Field : {self.log_data[ADCS_IDX.MAG_X:ADCS_IDX.MAG_Z + 1]}")
-        self.log_info(f"Sun Vector : {self.log_data[ADCS_IDX.SUN_VEC_X:ADCS_IDX.SUN_VEC_Z + 1]}")
-        self.log_info(f"Sun Status : {self.log_data[ADCS_IDX.SUN_STATUS]}")
+        if _LIGHT_SENSORS_ENABLED:
+            self.log_info(f"Sun Vector : {self.log_data[ADCS_IDX.SUN_VEC_X:ADCS_IDX.SUN_VEC_Z + 1]}")
+            self.log_info(f"Sun Status : {self.log_data[ADCS_IDX.SUN_STATUS]}")
         self.log_info(f"Gyro Status : {self.gyro_status}")
         self.log_info(f"Mag Status : {self.mag_status}")
 

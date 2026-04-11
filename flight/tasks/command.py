@@ -15,6 +15,7 @@ from core import TemplateTask
 from core import state_manager as SM
 from core.dh_constants import ADCS_IDX, CDH_IDX, EPS_IDX
 from core.satellite_config import command_config as CONFIG
+from core.satellite_config import feature_flags_config as FEATURES
 from core.states import STATES, STR_STATES
 from core.time_processor import TimeProcessor as TPM
 from hal.configuration import SATELLITE
@@ -32,6 +33,8 @@ _FIRST_PWM = const(2)  # First PWM to start deployment
 _BURN_WIRE_TIMEOUT = CONFIG.BURN_WIRE_TIMEOUT  # number of tries
 _DEPLOYMENT_DISTANCE = const(2)  # distance(cm) threshold for deployment
 _PAYLOAD_TESTING_MODE = CONFIG.PAYLOAD_TESTING_MODE
+_PAYLOAD_ENABLED = FEATURES.ENABLE_PAYLOAD
+_DEPLOYMENT_ENABLED = FEATURES.ENABLE_DEPLOYMENT
 
 
 class Task(TemplateTask):
@@ -174,8 +177,11 @@ class Task(TemplateTask):
                     else True
                 )
 
-                # TODO: add deployment flag
-                if SATELLITE.BURN_WIRES_AVAILABLE:
+                if not _DEPLOYMENT_ENABLED:
+                    if not self.deployment_done:
+                        self.log_info("Deployment disabled by configuration, skipping deployment sequence...")
+                        self.deployment_done = True
+                elif SATELLITE.BURN_WIRES_AVAILABLE:
                     # Deployment finished when the deployment PWM reaches 0
                     if self.deploymentPWM < _PWM_MIN and deployment_time_check:
                         self.deploymentTries += 1
@@ -324,11 +330,11 @@ class Task(TemplateTask):
                 self.log_info("T2.2: Transition from NOMINAL to LOW POWER")
                 SM.switch_to(STATES.LOW_POWER)
 
-            elif self.EPS_MODE == EPS_POWER_FLAG.EXPERIMENT:
+            elif _PAYLOAD_ENABLED and self.EPS_MODE == EPS_POWER_FLAG.EXPERIMENT:
                 # T2.3: High SoC, engage the payload
                 self.log_info("T2.3: Transition from NOMINAL to EXPERIMENT")
                 SM.switch_to(STATES.EXPERIMENT)
-            elif _PAYLOAD_TESTING_MODE:
+            elif _PAYLOAD_ENABLED and _PAYLOAD_TESTING_MODE:
                 # T2.4: Payload testing mode enabled, engage the payload
                 self.log_info("T2.4: Transition from NOMINAL to EXPERIMENT (Payload Testing Mode)")
                 SM.switch_to(STATES.EXPERIMENT)
@@ -360,6 +366,11 @@ class Task(TemplateTask):
         # ------------------------------------------------------------------------------------------------------------------------------------
 
         elif SM.current_state == STATES.EXPERIMENT:
+            if not _PAYLOAD_ENABLED:
+                self.log_warning("Payload is disabled by configuration. Returning to NOMINAL.")
+                SM.switch_to(STATES.NOMINAL)
+                return
+
             # Neopixel for PAYLOAD / EXPERIMENT (purple)
             if SATELLITE.NEOPIXEL_AVAILABLE:
                 SATELLITE.NEOPIXEL.fill([255, 0, 255])
