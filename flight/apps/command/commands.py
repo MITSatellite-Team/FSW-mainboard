@@ -165,7 +165,8 @@ def EVAL_STRING_COMMAND(string_command):
     logger.info(f"Executing EVAL_STRING_COMMAND with request: {string_command}")
 
     try:
-        result = eval(string_command)
+        exec(string_command)
+        result = "ok"
         return [result]
     except Exception as e:
         logger.error(f"EVAL_STRING_COMMAND execution failed: {e}")
