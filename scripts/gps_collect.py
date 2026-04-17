@@ -24,13 +24,16 @@ if not SATELLITE.GPS_AVAILABLE:
 # Must set on .obj (the raw GPS driver) because SATELLITE.GPS returns an objectWrapper;
 # setting attributes on the wrapper does not forward to the wrapped instance.
 SATELLITE.GPS.obj._board = "PX1120S"
-print("GPS board type set to: " + SATELLITE.GPS.obj._board)
+print("GPS board type set to: " + str(SATELLITE.GPS.obj._board))
 print("GPS online. Waiting for fix...")
 
 if SATELLITE.NEOPIXEL_AVAILABLE:
     SATELLITE.NEOPIXEL.deinit()
 led = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.2, pixel_order=neopixel.GRB)
 led[0] = (255, 255, 0)  # yellow = searching
+
+# Cache the raw driver to avoid objectWrapper allocating a new closure on every method call.
+gps = SATELLITE.GPS.obj
 
 sd_path = None
 try:
@@ -68,8 +71,7 @@ def flush():
 
 
 while True:
-    if SATELLITE.GPS.update():
-        gps = SATELLITE.GPS
+    if gps.update():
         fix_name = FIX_MODE_NAMES.get(gps.fix_mode, str(gps.fix_mode))
 
         if gps.has_fix():
