@@ -120,4 +120,3 @@ Other common devices causing brown out are burn wires, consider lowering its str
 ### Do I have to change anything before compiling the code for my targetted board.
 No. Configurations are automatically detected.
 
-
