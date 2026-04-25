@@ -4,13 +4,15 @@ import sys
 import time
 import board
 import busio
+import struct
 
 from core import logger, setup_logger, state_manager
 from core.satellite_config import main_config as CONFIG
 from hal.configuration import SATELLITE
-
+from hal.argus_v4 import ArgusV4Interfaces
 FIX_MODE_NAMES = {0: "NO_FIX", 1: "PREDICTION", 2: "2D", 3: "3D", 4: "DIFFERENTIAL"}
-TMP117_ADDRESSES  = [0x48, 0x49, 0x4A, 0x4B]
+TMP117_ADDRESSES  = [0x48, 0x76, 0x4B]
+# ['0x40', '0x41', '0x42', '0x48', '0x68', '0x76']
 
 # Memory stats
 def print_memory_stats(call_gc=True):
@@ -83,23 +85,24 @@ def send_message(location, temperature, pressure, imu):
     if not location is None:
         lattitude, longitude, mean_sea_level_altitude = location
 
-    payload.extend(lattitude.to_bytes(32, 'little'))
-    payload.extend(longitude.to_bytes(32, 'little'))
-    payload.extend(mean_sea_level_altitude.to_bytes(32, 'little'))
+    payload.extend(struct.pack('<f', lattitude))
+    payload.extend(struct.pack('<f', longitude))
+    payload.extend(struct.pack('<f', mean_sea_level_altitude))
 
     if temperature is None:
-        temperature = 0
+        temperature = [0]
+    for temp in temperature:
 
-    payload.extend(temperature.to_bytes(32, 'little'))
+        payload.extend(struct.pack('<f', temp))
 
     if pressure is None:
         pressure = 0
 
-    payload.extend(temperature.to_bytes(32, 'little'))
+    payload.extend(struct.pack('<f', pressure))
 
     # TODO: IMU
 
-    print(f"Sending message... {payload}")
+    print(f"Sending message... {payload} Tempe: {temperature}")
     SATELLITE.RADIO.send(payload)
 
 def _read_tmp117(i2c, address):
@@ -122,27 +125,32 @@ def collect_temperature(i2c1):
     counter = 0
     while not i2c1.try_lock():
         counter += 1
-
-        if counter > 300: # WE LOVE NASA PROGRAMMING PRACTICES
+        if counter > 300:
             return None
 
     all_addresses = i2c1.scan()
     tmp117s = [a for a in all_addresses if a in TMP117_ADDRESSES]
+    print(all_addresses)
+    result = []
 
     if not tmp117s:
         print("No TMP117 found. Addresses on bus:", [hex(a) for a in all_addresses])
     else:
         for addr in tmp117s:
             temp_c = _read_tmp117(i2c1, addr)
-
+            
             if temp_c is not None:
-                return temp_c
+                temp_f = temp_c * 9 / 5 + 32
+                result.append(temp_f)
 
     i2c1.unlock()
+    if(len(result) == 0):
+        return None
+    else:
+        return result
+    # return (len(result) == 0 ) ? None: result 
 
-    return None
-
-send_message((0, 0, 0), 0, 0, None)
+send_message((0, 0, 0), [0], 0, None)
 
 try:
     print("Initializing GPS...")
@@ -150,7 +158,7 @@ try:
     gps = SATELLITE.GPS.obj
 
     print("Initializing I2C")
-    i2c1 = busio.I2C(board.SCL1, board.SDA1)
+    i2c1 = ArgusV4Interfaces.I2C1
 
     print("Beginning Flight...")
     while True:
