@@ -2,11 +2,16 @@
 import gc
 import sys
 import time
+import board
+import busio
+import digitalio
 
 from core import logger, setup_logger, state_manager
 from core.satellite_config import main_config as CONFIG
 from hal.configuration import SATELLITE
 
+FIX_MODE_NAMES = {0: "NO_FIX", 1: "PREDICTION", 2: "2D", 3: "3D", 4: "DIFFERENTIAL"}
+TMP117_ADDRESSES  = [0x48, 0x49, 0x4A, 0x4B]
 
 # Memory stats
 def print_memory_stats(call_gc=True):
@@ -45,15 +50,102 @@ print("Errors:", errors)
 print_memory_stats(call_gc=False)
 print_memory_stats(call_gc=True)
 
+def collect_location(gps):
+    print("Collecting Location...")
+
+    if gps.update():
+        fix_name = FIX_MODE_NAMES.get(gps.fix_mode, str(gps.fix_mode))
+
+        if gps.has_fix():
+            utc = gps.timestamp_utc
+
+            print(
+                "[FIX " + fix_name + "] " +
+                str(utc["year"]) + "-" + str(utc["month"]) + "-" + str(utc["day"]) + " " +
+                str(utc["hour"]) + ":" + str(utc["minute"]) + ":" + str(utc["second"]) + " UTC | " +
+                "Lat " + str(round(gps.latitude, 5)) + " Lon " + str(round(gps.longitude, 5)) + " | " +
+                "Alt " + str(round(gps.mean_sea_level_altitude, 1)) + " m MSL | " +
+                "PDOP " + str(round(gps.pdop, 1))
+            )
+
+            return (gps.latitude, gps.longitude, gps.mean_sea_level_altitude)
+        else:
+            print("[" + fix_name + "] week=" + str(gps.week) + " tow=" + str(round(gps.tow, 1)) + " -- waiting for fix...")
+
+    return None
+
+def send_message(location, temperature, pressure, imu):
+    # TODO: build packet, I just don't remember python byte manipulation :)
+
+    print("Sending message...")
+    tx_msg = bytearray([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07])
+    SATELLITE.RADIO.send(tx_msg)
+
+def _read_tmp117(i2c, address):
+    buf = bytearray(2)
+
+    try:
+        i2c.writeto_then_readfrom(address, bytes([0x00]), buf)
+    except Exception as e:
+        print("  Read error at {}: {}".format(hex(address), e))
+
+        return None
+
+    raw = (buf[0] << 8) | buf[1]
+    if raw & 0x8000:
+        raw -= 0x10000
+
+    return raw * 0.0078125
+
+def collect_temperature(i2c1):
+    counter = 0
+    while not i2c1.try_lock():
+        counter += 1
+
+        if counter > 300: # WE LOVE NASA PROGRAMMING PRACTICES
+            return None
+
+    all_addresses = i2c1.scan()
+    tmp117s = [a for a in all_addresses if a in TMP117_ADDRESSES]
+
+    if not tmp117s:
+        print("No TMP117 found. Addresses on bus:", [hex(a) for a in all_addresses])
+    else:
+        for addr in tmp117s:
+            temp_c = _read_tmp117(i2c1, addr)
+
+            if temp_c is not None:
+                return temp_c
+
+    i2c1.unlock()
+
+    return None
+
 try:
-    # Run forever
+    print("Initializing GPS...")
+    SATELLITE.GPS.obj._board = "PX1120S"
+    gps = SATELLITE.GPS.obj
 
-    # from core import DataHandler as DH
+    print("Initializing I2C")
+    i2c1 = busio.I2C(board.SCL1, board.SDA1)
 
-    # DH.delete_all_files()
+    print("Beginning Flight...")
+    while True:
 
-    logger.info("Starting state manager")
-    state_manager.start()
+        # TODO: IMU data
+        imu = None
+
+        # TODO: temperature data
+        temperature = collect_temperature(i2c1)
+
+        # TODO: Collect pressure data
+        pressure = None
+
+        location = collect_location(gps)
+
+        send_message(location, temperature, pressure, imu)
+
+        time.sleep(5)
 
 except Exception as e:
     logger.critical("ERROR:", e)
