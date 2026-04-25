@@ -4,7 +4,6 @@ import sys
 import time
 import board
 import busio
-import digitalio
 
 from core import logger, setup_logger, state_manager
 from core.satellite_config import main_config as CONFIG
@@ -77,9 +76,31 @@ def collect_location(gps):
 def send_message(location, temperature, pressure, imu):
     # TODO: build packet, I just don't remember python byte manipulation :)
 
-    print("Sending message...")
-    tx_msg = bytearray([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07])
-    SATELLITE.RADIO.send(tx_msg)
+    payload = bytearray([])
+
+    lattitude, longitude, mean_sea_level_altitude = (0, 0, 0)
+
+    if not location is None:
+        lattitude, longitude, mean_sea_level_altitude = location
+
+    payload.extend(lattitude.to_bytes(32, 'little'))
+    payload.extend(longitude.to_bytes(32, 'little'))
+    payload.extend(mean_sea_level_altitude.to_bytes(32, 'little'))
+
+    if temperature is None:
+        temperature = 0
+
+    payload.extend(temperature.to_bytes(32, 'little'))
+
+    if pressure is None:
+        pressure = 0
+
+    payload.extend(temperature.to_bytes(32, 'little'))
+
+    # TODO: IMU
+
+    print(f"Sending message... {payload}")
+    SATELLITE.RADIO.send(payload)
 
 def _read_tmp117(i2c, address):
     buf = bytearray(2)
@@ -120,6 +141,8 @@ def collect_temperature(i2c1):
     i2c1.unlock()
 
     return None
+
+send_message((0, 0, 0), 0, 0, None)
 
 try:
     print("Initializing GPS...")
