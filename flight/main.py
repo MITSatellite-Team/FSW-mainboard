@@ -10,9 +10,10 @@ from core import logger, setup_logger, state_manager
 from core.satellite_config import main_config as CONFIG
 from hal.configuration import SATELLITE
 from hal.argus_v4 import ArgusV4Interfaces
+from hal.drivers.ms8607 import MS8607
+
 FIX_MODE_NAMES = {0: "NO_FIX", 1: "PREDICTION", 2: "2D", 3: "3D", 4: "DIFFERENTIAL"}
-TMP117_ADDRESSES  = [0x48, 0x76, 0x4B]
-# ['0x40', '0x41', '0x42', '0x48', '0x68', '0x76']
+TMP117_ADDRESSES  =  [0x48, 0x49, 0x4A, 0x4B]
 
 # Memory stats
 def print_memory_stats(call_gc=True):
@@ -75,7 +76,7 @@ def collect_location(gps):
 
     return None
 
-def send_message(location, temperature, pressure, imu):
+def send_message(location, temperature, pressure,humidity, imu_accel, imu_gyro):
     # TODO: build packet, I just don't remember python byte manipulation :)
 
     payload = bytearray([])
@@ -100,9 +101,24 @@ def send_message(location, temperature, pressure, imu):
 
     payload.extend(struct.pack('<f', pressure))
 
-    # TODO: IMU
+    if humidity is None:
+        humidity = 0
 
-    print(f"Sending message... {payload} Tempe: {temperature}")
+    payload.extend(struct.pack('<f', humidity))
+
+    # TODO: IMU
+    if imu_gyro is None or imu_accel is None:
+        payload.extend(struct.pack('<ffffff', 0, 0, 0, 0, 0, 0))
+    else:
+        ax, ay, az = imu_accel
+        gx, gy, gz = imu_gyro
+        payload.extend(struct.pack('<ffffff', ax, ay, az, gx, gy, gz))
+        
+
+
+    # payload.extend(struct.pack('<ffffff', ax, ay, az, gx, gy, gz))
+
+    print(f"Sending message... {payload} Tempe: {temperature} Pressure: {pressure} Humidity {humidity} Accel: {imu_accel} Gyro: {imu_gyro}")
     SATELLITE.RADIO.send(payload)
 
 def _read_tmp117(i2c, address):
@@ -130,7 +146,7 @@ def collect_temperature(i2c1):
 
     all_addresses = i2c1.scan()
     tmp117s = [a for a in all_addresses if a in TMP117_ADDRESSES]
-    print(all_addresses)
+    # print(all_addresses)
     result = []
 
     if not tmp117s:
@@ -149,8 +165,10 @@ def collect_temperature(i2c1):
     else:
         return result
     # return (len(result) == 0 ) ? None: result 
+# def collect_pressure(i2c1):
+    
 
-send_message((0, 0, 0), [0], 0, None)
+send_message((0, 0, 0), [0],0, 0, None,None)
 
 try:
     print("Initializing GPS...")
@@ -161,20 +179,30 @@ try:
     i2c1 = ArgusV4Interfaces.I2C1
 
     print("Beginning Flight...")
+    ms8607 = MS8607(i2c1)
+    
     while True:
 
         # TODO: IMU data
-        imu = None
+        imu = SATELLITE.IMU
+        if SATELLITE.IMU_AVAILABLE:
+            imu_accel = imu.accel()
+            imu_gyro = imu.gyro()
+            print(imu_accel)
+        else:
+            imu_accel = None
+            imu_gyro = None
 
         # TODO: temperature data
         temperature = collect_temperature(i2c1)
 
         # TODO: Collect pressure data
-        pressure = None
+        pressure = ms8607.pressure
+        humidity = ms8607.relative_humidity
 
         location = collect_location(gps)
 
-        send_message(location, temperature, pressure, imu)
+        send_message(location, temperature, pressure,humidity, imu_accel, imu_gyro)
 
         time.sleep(5)
 
