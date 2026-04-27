@@ -188,7 +188,7 @@ try:
         if SATELLITE.IMU_AVAILABLE:
             imu_accel = imu.accel()
             imu_gyro = imu.gyro()
-            print(imu_accel)
+            # print(imu_accel)
         else:
             imu_accel = None
             imu_gyro = None
