@@ -248,6 +248,10 @@ class ArgusV4Components:
     JETSON_POWER_MONITOR_I2C = ArgusV4Interfaces.I2C1
     JETSON_POWER_MONITOR_I2C_ADDRESS = const(0x46)
 
+    # OPENLOG (Qwiic)
+    OPENLOG_I2C = ArgusV4Interfaces.I2C1
+    OPENLOG_I2C_ADDRESS = const(0x2A)
+
     ########
     # SPI0 #
     ########
@@ -669,6 +673,21 @@ class ArgusV4(CubeSat):
             if self.__debug:
                 raise e
 
+            return [None, Errors.DEVICE_NOT_INITIALISED]
+
+    def __openlog_boot(self, _) -> list[object, int]:
+        """openlog_boot: Boot sequence for the Qwiic OpenLog I2C logger"""
+        if not FEATURES.ENABLE_OPENLOG:
+            return [None, Errors.NO_ERROR]
+
+        from hal.drivers.openlog import QwiicOpenLog
+
+        try:
+            openlog = QwiicOpenLog(ArgusV4Components.OPENLOG_I2C, ArgusV4Components.OPENLOG_I2C_ADDRESS)
+            return [openlog, Errors.NO_ERROR]
+        except Exception as e:
+            if self.__debug:
+                raise e
             return [None, Errors.DEVICE_NOT_INITIALISED]
 
     def __watchdog_boot(self, _) -> list[object, int]:

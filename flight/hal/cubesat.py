@@ -49,6 +49,7 @@ class CubeSat:
         self.__device_list = OrderedDict(
             [
                 ("NEOPIXEL", Device(self.__neopixel_boot, ASIL0)),
+                ("OPENLOG", Device(self.__openlog_boot, ASIL0)),
                 ("SDCARD", Device(self.__sd_card_boot, ASIL1)),  # SD Card must enabled before other devices
                 ("RTC", Device(self.__rtc_boot, ASIL2)),
                 ("GPS", Device(self.__gps_boot, ASIL4, peripheral_line=False)),
@@ -89,6 +90,7 @@ class CubeSat:
 
         self.__imu_temp_flag = False
         self.__errors = {
+            "OPENLOG": [],
             "SDCARD": [],
             "RTC": [],
             "GPS": [],
@@ -453,6 +455,25 @@ class CubeSat:
             and self.__device_list["SDCARD"].device is not None
             and not self.__device_list["SDCARD"].dead
             and not self.__device_list["SDCARD"].temp_disabled
+        )
+
+    @property
+    def OPENLOG(self):
+        """OPENLOG: Returns the Qwiic OpenLog stream object
+        :return: object or None
+        """
+        return self.__device_list["OPENLOG"].device
+
+    @property
+    def OPENLOG_AVAILABLE(self) -> bool:
+        """OPENLOG_AVAILABLE: Returns True if the OpenLog is available
+        :return: bool
+        """
+        return (
+            self.key_in_device_list("OPENLOG")
+            and self.__device_list["OPENLOG"].device is not None
+            and not self.__device_list["OPENLOG"].dead
+            and not self.__device_list["OPENLOG"].temp_disabled
         )
 
     @property

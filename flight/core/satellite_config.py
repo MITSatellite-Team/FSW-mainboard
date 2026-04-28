@@ -30,6 +30,7 @@ class feature_flags_config:
     ENABLE_BOARD_POWER_MONITOR = False
     ENABLE_JETSON_POWER_MONITOR = False
     ENABLE_SOLAR_POWER_MONITORS = False
+    ENABLE_OPENLOG = True
 
 
 class hal_monitor_config:

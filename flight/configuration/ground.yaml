@@ -52,6 +52,8 @@ feature_flags:
     value: false
   ENABLE_SOLAR_POWER_MONITORS:
     value: false
+  ENABLE_OPENLOG:
+    value: true
 
 # HAL Monitor Task
 hal_monitor:
