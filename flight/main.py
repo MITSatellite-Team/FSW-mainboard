@@ -9,6 +9,7 @@ import struct
 from core import logger, setup_logger, state_manager
 from core.logging import StreamHandler
 from core.satellite_config import main_config as CONFIG
+from core.time_processor import TimeProcessor as TPM
 from hal.configuration import SATELLITE
 from hal.argus_v4 import ArgusV4Interfaces
 from hal.drivers.ms8607 import MS8607
@@ -30,14 +31,14 @@ for path in ["/hal", "/apps", "/core"]:
     if path not in sys.path:
         sys.path.append(path)
 
-setup_logger(level=CONFIG.LOG_LEVEL)
-
 print_memory_stats(call_gc=True)
 
 print("Booting ARGUS...")
 SATELLITE.boot_sequence()
 print("ARGUS booted.")
 print(f"Boot Errors: {SATELLITE.ERRORS}")
+
+setup_logger(level=CONFIG.LOG_LEVEL)
 
 _openlog_stream = None
 if SATELLITE.OPENLOG_AVAILABLE:
@@ -107,6 +108,9 @@ def collect_location(gps):
         result["fix_mode"] = gps.fix_mode
         fix_name = FIX_MODE_NAMES.get(gps.fix_mode, str(gps.fix_mode))
 
+        if not SATELLITE.RTC_AVAILABLE:
+            TPM.set_time_reference(gps.unix_time)
+
         if gps.has_fix():
             utc = gps.timestamp_utc
             gps_utc = f"{utc['year']}-{utc['month']:02d}-{utc['day']:02d} {utc['hour']:02d}:{utc['minute']:02d}:{utc['second']:02d}"
@@ -117,6 +121,9 @@ def collect_location(gps):
                 "Alt " + str(round(gps.mean_sea_level_altitude, 1)) + " m MSL | " +
                 "PDOP " + str(round(gps.pdop, 1))
             )
+
+            if gps.has_3d_fix():
+                TPM.set_time(gps.unix_time)
 
             result["gps_utc"] = gps_utc
             result["lat"] = gps.latitude
@@ -158,7 +165,7 @@ def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro,
     payload = struct.pack(
         _PACKET_FMT,
         b'ST',
-        int(time.monotonic()),
+        TPM.time(),
         gps_valid, gps_fix, lat, lon, alt,
         temp_valid, t0, t1, t2, t3,
         baro_valid, pressure, humidity,
@@ -166,7 +173,7 @@ def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro,
         b'RD',
     )
 
-    print(f"Sending {len(payload)}B | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
+    print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
     SATELLITE.RADIO.send(payload)
 
 def _read_tmp117(i2c, address):
@@ -227,6 +234,8 @@ try:
     i2c1 = ArgusV4Interfaces.I2C1
 
     print("Beginning Flight...")
+    if TPM.time() < 1735689600:  # RTC is uninitialized (before 2025), seed with compile-time approximation
+        TPM.set_time(1777669052)  # will be corrected on first 3D GPS fix
     ms8607 = MS8607(i2c1)
     
     while True:
@@ -251,11 +260,11 @@ try:
 
         location = collect_location(gps)
 
-        log_csv_row(time.monotonic(), location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag)
+        log_csv_row(TPM.time(), location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag)
 
         send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag)
 
-        time.sleep(5)
+        time.sleep(15)
 
 except Exception as e:
     logger.critical("ERROR:", e)
