@@ -62,7 +62,7 @@ class CubeSat:
                 ("BOARD_PWR", Device(self.__power_monitor_boot, ASIL1)),
                 ("RADIO_PWR", Device(self.__power_monitor_boot, ASIL1)),
                 ("GPS_PWR", Device(self.__power_monitor_boot, ASIL1)),
-                ("JETSON_PWR", Device(self.__power_monitor_boot, ASIL1)),
+                # ("JETSON_PWR", Device(self.__power_monitor_boot, ASIL1)),
                 ("XP_PWR", Device(self.__power_monitor_boot, ASIL1)),
                 ("XM_PWR", Device(self.__power_monitor_boot, ASIL1)),
                 ("YP_PWR", Device(self.__power_monitor_boot, ASIL1)),

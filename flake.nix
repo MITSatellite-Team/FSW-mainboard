@@ -73,7 +73,12 @@
             '';
 
             packages =
-              (with python.pkgs; [
+              (with pkgs; [
+                arduino-ide
+                minicom
+                udisks2
+              ])
+              ++ (with python.pkgs; [
                 venvShellHook
                 pip
 
@@ -88,7 +93,6 @@
                 # or
                 # python.pkgs.ruff
 
-                pkgs.minicom
                 matplotlib
                 pyserial
                 numpy

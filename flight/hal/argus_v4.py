@@ -15,7 +15,6 @@ from hal.drivers.objectWrapper import objectWrapper
 from micropython import const
 from sdcardio import SDCard
 
-
 class ArgusV4Power:
     #########
     # eFUSE #
@@ -116,7 +115,8 @@ class ArgusV4Interfaces:
     JETSON_BAUD = const(460800)
     JETSON_TX = board.TX1
     JETSON_RX = board.RX1
-    JETSON_UART = UART(JETSON_TX, JETSON_RX, baudrate=JETSON_BAUD, receiver_buffer_size=8192)
+    # JETSON_UART = UART(JETSON_TX, JETSON_RX, baudrate=JETSON_BAUD, receiver_buffer_size=8192)
+    JETSON_UART = None
 
 
 class ArgusV4Components:
@@ -295,9 +295,9 @@ class ArgusV4Components:
     #########
 
     # JETSON
-    JETSON_UART = ArgusV4Interfaces.JETSON_UART
-    JETSON_ENABLE = digitalio.DigitalInOut(board.JETSON_EN)
-    JETSON_ENABLE.direction = digitalio.Direction.OUTPUT
+    # JETSON_UART = ArgusV4Interfaces.JETSON_UART
+    # JETSON_ENABLE = digitalio.DigitalInOut(board.JETSON_EN)
+    # JETSON_ENABLE.direction = digitalio.Direction.OUTPUT
 
     ########
     # MISC #
