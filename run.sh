@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Detect the operating system
 OS=$(uname -s)
 export ARGUS_ROOT=$(pwd)
@@ -53,11 +51,11 @@ else
     exit 1
 fi
 
-# Make the correct mpy-cross executable
-if [[ ! "$OS" == *_NT* ]]; then 
-    chmod +x build_tools/$MPY_EXEC
-
-    echo "$MPY_EXEC is now executable"
+# Make the mpy-cross executables (every CircuitPython version) runnable
+if [[ ! "$OS" == *_NT* ]]; then
+    for f in build_tools/$MPY_EXEC*; do
+        [ -f "$f" ] && chmod +x "$f" && echo "$(basename "$f") is now executable"
+    done
 fi
 
 # Detect the appropriate Python command
@@ -71,6 +69,15 @@ else
 fi
 
 echo "Using Python command: $PYTHON_CMD"
+
+# Find the board's serial REPL once (skipped if ARGUS_PORT is already set)
+find_board_port() {
+    if [[ -z "${ARGUS_PORT-}" ]]; then
+        ARGUS_PORT=$($PYTHON_CMD build_tools/board_serial.py) || exit 1
+    fi
+    export ARGUS_PORT
+    echo "Using serial port: $ARGUS_PORT"
+}
 
 export ARGUS_SIMULATION_FLAG=0
 
@@ -94,7 +101,8 @@ if [[ -n "$ARGUS_ID_ARG" ]]; then
 fi
 
 if [[ -z $1 ]]; then
-    $PYTHON_CMD build_tools/build.py "${BUILD_ARGS[@]}"
+    find_board_port
+    $PYTHON_CMD build_tools/build.py "${BUILD_ARGS[@]}" || exit 1
     $PYTHON_CMD build_tools/move_to_board.py
 elif [ "$1" == "emulate" ]; then
     $PYTHON_CMD build_tools/build-emulator.py $FLIGHT_FLAG
@@ -129,10 +137,13 @@ elif [ "$1" == "simulate" ]; then
     cd -
 elif [ "$1" == "flight" ]; then
     # If --flight is the only argument, build with flight config
-    $PYTHON_CMD build_tools/build.py "${BUILD_ARGS[@]}"
+    find_board_port
+    $PYTHON_CMD build_tools/build.py "${BUILD_ARGS[@]}" || exit 1
     $PYTHON_CMD build_tools/move_to_board.py
 else
-    # Pass flight flag to build command
-    $PYTHON_CMD build_tools/build.py "${BUILD_ARGS[@]}"
-    $PYTHON_CMD build_tools/move_to_board.py -d "$1"
+    # Any other argument is the board's serial port, e.g. ./run.sh /dev/ttyUSB0
+    export ARGUS_PORT="$1"
+    find_board_port
+    $PYTHON_CMD build_tools/build.py "${BUILD_ARGS[@]}" || exit 1
+    $PYTHON_CMD build_tools/move_to_board.py
 fi

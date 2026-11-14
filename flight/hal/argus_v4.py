@@ -518,6 +518,8 @@ class ArgusV4(CubeSat):
         :return: Error code if the radio failed to initialize
         """
 
+        print("Booting radio...")
+
         from hal.drivers.sx126x import SX1262
 
         try:
@@ -553,6 +555,8 @@ class ArgusV4(CubeSat):
             return [radio, Errors.NO_ERROR]
 
         except Exception as e:
+            print(e)
+
             if self.__debug:
                 raise e
 

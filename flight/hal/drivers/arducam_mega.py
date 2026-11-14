@@ -49,7 +49,9 @@ class ArducamMega:
 
         while (self.read_register(REG_STATE) & 0x03) != 0x02:
             if (time.monotonic_ns() // 1_000_000) - t0 > timeout_ms:
-                raise ValueError("Failed to reach idle!")
+                state = self.read_register(REG_STATE)
+                
+                raise ValueError("Failed to reach idle! " + str(state))
 
             time.sleep(0.002)
 

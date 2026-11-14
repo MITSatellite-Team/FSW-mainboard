@@ -99,3 +99,17 @@ If the data structure has changed, wipe the SD card using the provided script.
 ### Mainboard brown-out / random restarts
 
 Radio cannot run without adequate power supply. If on USB power, disable some peripherals. Burn wires can also cause brown-outs — lower their drive strength.
+
+# New Build Method
+```
+python3 build_tools/repl_check.py /dev/ttyUSB0
+export ARGUS_PORT=/dev/ttyUSB0
+./run.sh
+```
+
+```
+curl -L -o build_tools/mpy-cross-cpy10 \
+  https://adafruit-circuit-python.s3.amazonaws.com/bin/mpy-cross/linux-amd64/mpy-cross-linux-amd64-10.3.1.static
+chmod +x build_tools/mpy-cross-cpy10
+build_tools/mpy-cross-cpy10 --version
+```

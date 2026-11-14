@@ -1366,6 +1366,7 @@ class SX126X:
     def SPItransfer(self, cmd, cmdLen, write, dataOut, dataIn, numBytes, waitForBusy, timeout=5000):
         while not self.spi.try_lock():
             pass
+        self.spi.configure(baudrate=2000000, phase=0, polarity=0, bits=8)
         self.cs.value = False
 
         start = ticks_ms()
