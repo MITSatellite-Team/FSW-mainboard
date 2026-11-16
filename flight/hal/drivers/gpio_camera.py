@@ -77,35 +77,14 @@ def recv_bytes_no_alloc(n, buff):
         print("Receiving byte", i)
         buff[i] = recv_byte()
 
-def 
-
-STEP = 2
-RAMP = " .:-=+*#%@"
-
-def print_frame():
-    n = len(RAMP)
-
-    for y in range(0, IMG_H, STEP):
-        base = y * IMG_W
-        row = []
-
-        for x in range(0, IMG_W, STEP):
-            v = FRAME[base + x]
-            row.append(RAMP[v * n // 256])
-
-        print("".join(row))
-
-    print()
-
-while True:
+def get_image(buff):
     try:
         print("Sending bit!")
 
         send_bit(True)
 
         print("Receiving bytes!")
-        recv_bytes_no_alloc(len(FRAME), FRAME)
-
-        print_frame()
+        recv_bytes_no_alloc(len(buff), buff)
+        print("Received all bytes!")
     except:
         pass
