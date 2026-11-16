@@ -52,7 +52,6 @@ _tx = bytearray(3)
 _rx = bytearray(3)
 _cmd = bytearray(2)
 
-
 def ms():
     return time.monotonic_ns() // 1_000_000
 

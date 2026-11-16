@@ -11,6 +11,8 @@ REG_FORMAT = 0x20
 REG_RESOLUTION = 0x21
 REG_FIFO = 0x04  
 
+REG_YEAR, REG_MONTH, REG_DAY, REG_FPGA_VER = 0x41, 0x42, 0x43, 0x49
+
 SENSOR_RESET_ENABLE = 0x40
 FIFO_CLEAR = 0x01
 FIFO_START = 0x02
@@ -48,10 +50,14 @@ class ArducamMega:
         t0 = time.monotonic_ns() // 1_000_000
 
         while (self.read_register(REG_STATE) & 0x03) != 0x02:
+            print(self.read_register(REG_STATE))
+
             if (time.monotonic_ns() // 1_000_000) - t0 > timeout_ms:
                 raise ValueError("Failed to reach idle!")
 
             time.sleep(0.002)
+
+        print("Reached idle!")
 
     def boot(self):
         time.sleep(1.0)
@@ -78,6 +84,20 @@ class ArducamMega:
         self.write_register(REG_RESOLUTION, mode)
 
         self.wait_idle()
+
+    def probe(self):
+        raw = [self.read_register(REG_STATE) for _ in range(8)]
+        print("STATE x8:", [hex(v) for v in raw])
+
+        y = self.read_register(REG_YEAR) & 0x3F
+        m = self.read_register(REG_MONTH) & 0x0F
+        d = self.read_register(REG_DAY) & 0x1F
+        v = self.read_register(REG_FPGA_VER)
+        print(f"FW date: 20{y:02d}-{m:02d}-{d:02d}  FPGA ver: {v:#04x}")
+
+        ok = 20 <= y <= 30 and 1 <= m <= 12 and 1 <= d <= 31
+        print("SPI link OK" if ok else "SPI link looks BAD")
+        return ok
 
     def take_picture(self, timeout_ms=3000):
         self.write_register(REG_FIFO, FIFO_CLEAR)

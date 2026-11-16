@@ -1,234 +1,119 @@
-import gc
-import sys
 import time
 import board
-import busio
-import struct
 import digitalio
-import bitbangio
-import microcontroller.pin as GPIO
+import microcontroller
+from digitalio import Pull
 
-from hal.drivers.arducam_mega import ArducamMega, FMT_YUV, MODE_96X96
+IMG_W, IMG_H = 160, 120
+FRAME = bytearray(IMG_W * IMG_H)
 
-# csPin2 = digitalio.DigitalInOut(GPIO.GPIO13)
-# csPin2.switch_to_output(value=True)
+TIMEOUT_NS = 500_000_000
 
-# loraPin = digitalio.DigitalInOut(GPIO.GPIO33)
-# loraPin.switch_to_output(value=True)
+class Line:
+    def __init__(self, pin):
+        self.io = digitalio.DigitalInOut(pin)
+        self.release()
+    def low(self):
+        self.io.switch_to_output(value=False)
+    def release(self):
+        self.io.switch_to_input(pull=Pull.UP)
 
-# spi = busio.SPI(GPIO.GPIO6, MOSI=GPIO.GPIO7, MISO=GPIO.GPIO4)
-spi = bitbangio.SPI(GPIO.GPIO6, MOSI=GPIO.GPIO7, MISO=GPIO.GPIO4)
-cam1 = ArducamMega(spi, GPIO.GPIO8)
-cam1.boot()
-cam1.configure(MODE_96X96, FMT_YUV)
+L = (Line(microcontroller.pin.GPIO8), Line(microcontroller.pin.GPIO9))
 
-frame = bytearray(96 * 96 * 2)
-# while True:
-    # length = cam1.take_picture()
+def _reset():
+    L[0].release(); L[1].release()
 
-    # if length >= len(frame):
-    #     cam1.read_fifo(frame)
-    #     ArducamMega.render(frame)
+def _wait(line, level, timeout_ns=TIMEOUT_NS):
+    io = line.io
+    deadline = time.monotonic_ns() + timeout_ns
+    while io.value != level:
+        if time.monotonic_ns() > deadline:
+            _reset()
+            raise TimeoutError
 
-from core import logger, setup_logger, state_manager
-from core.logging import StreamHandler
-from core.satellite_config import main_config as CONFIG
-from core.time_processor import TimeProcessor as TPM
-from hal.configuration import SATELLITE
-from hal.argus_v4 import ArgusV4Interfaces
-from hal.drivers.ms8607 import MS8607
+def send_bit(b):
+    me, other = L[b], L[1 - b]
+    me.low()               # 1. assert bit
+    _wait(other, False)    # 2. receiver ACKs on the other line
+    me.release()           # 3. release
+    _wait(other, True)     # 4. back to idle
 
-FIX_MODE_NAMES = {0: "NO_FIX", 1: "PREDICTION", 2: "2D", 3: "3D", 4: "DIFFERENTIAL"}
-TMP117_ADDRESSES  =  [0x48, 0x49, 0x4A, 0x4B]
-
-for path in ["/hal", "/apps", "/core"]:
-    if path not in sys.path:
-        sys.path.append(path)
-
-print("Booting ARGUS...")
-
-SATELLITE.boot_sequence()
-# cam1.boot()
-
-print("ARGUS booted.")
-print(f"Boot Errors: {SATELLITE.ERRORS}")
-
-setup_logger(level=CONFIG.LOG_LEVEL)
-
-print("Waiting 1 sec...")
-time.sleep(1)
-
-def collect_location(gps):
-    print("Collecting Location...")
-    result = {"gps_valid": 0, "fix_mode": 0, "gps_utc": "", "lat": 0.0, "lon": 0.0, "alt": 0.0}
-
-    if gps.update():
-        result["gps_valid"] = 1
-        result["fix_mode"] = gps.fix_mode
-        fix_name = FIX_MODE_NAMES.get(gps.fix_mode, str(gps.fix_mode))
-
-        if not SATELLITE.RTC_AVAILABLE:
-            TPM.set_time_reference(gps.unix_time)
-
-        if gps.has_fix():
-            utc = gps.timestamp_utc
-            gps_utc = f"{utc['year']}-{utc['month']:02d}-{utc['day']:02d} {utc['hour']:02d}:{utc['minute']:02d}:{utc['second']:02d}"
-
-            print(
-                "[FIX " + fix_name + "] " + gps_utc + " UTC | " +
-                "Lat " + str(round(gps.latitude, 5)) + " Lon " + str(round(gps.longitude, 5)) + " | " +
-                "Alt " + str(round(gps.mean_sea_level_altitude, 1)) + " m MSL | " +
-                "PDOP " + str(round(gps.pdop, 1))
-            )
-
-            if gps.has_3d_fix():
-                TPM.set_time(gps.unix_time)
-
-            result["gps_utc"] = gps_utc
-            result["lat"] = gps.latitude
-            result["lon"] = gps.longitude
-            result["alt"] = gps.mean_sea_level_altitude
-        else:
-            print("[" + fix_name + "] week=" + str(gps.week) + " tow=" + str(round(gps.tow, 1)) + " -- waiting for fix...")
-
-    return result
-
-_PACKET_FMT = '<2sIBBfffBffffBffBfffffffff2s'
-
-def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag):
-    gps_valid = location.get("gps_valid", 0)
-    gps_fix = location.get("fix_mode", 0)
-    lat = location.get("lat", 0.0)
-    lon = location.get("lon", 0.0)
-    alt = location.get("alt", 0.0)
-
-    temps = (temperature or []) + [0.0, 0.0, 0.0, 0.0]
-    temp_valid = 0
-    if temperature:
-        for i in range(min(len(temperature), 4)):
-            temp_valid |= (1 << i)
-    t0, t1, t2, t3 = float(temps[0]), float(temps[1]), float(temps[2]), float(temps[3])
-
-    baro_valid = 0 if (pressure is None or humidity is None) else 1
-    pressure = float(pressure or 0.0)
-    humidity = float(humidity or 0.0)
-
-    imu_valid = 0 if (imu_accel is None or imu_gyro is None or imu_mag is None) else 1
-    if imu_valid:
-        ax, ay, az = imu_accel
-        gx, gy, gz = imu_gyro
-        mx, my, mz = imu_mag
-    else:
-        ax = ay = az = gx = gy = gz = mx = my = mz = 0.0
-
-    payload = struct.pack(
-        _PACKET_FMT,
-        b'ST',
-        TPM.time(),
-        gps_valid, gps_fix, lat, lon, alt,
-        temp_valid, t0, t1, t2, t3,
-        baro_valid, pressure, humidity,
-        imu_valid, ax, ay, az, gx, gy, gz, mx, my, mz,
-        b'RD',
-    )
-
-    print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
-    SATELLITE.RADIO.send(payload)
-
-def _read_tmp117(i2c, address):
-    buf = bytearray(2)
-
-    try:
-        i2c.writeto_then_readfrom(address, bytes([0x00]), buf)
-    except Exception as e:
-        print("  Read error at {}: {}".format(hex(address), e))
-
-        return None
-
-    raw = (buf[0] << 8) | buf[1]
-    if raw & 0x8000:
-        raw -= 0x10000
-
-    return raw * 0.0078125
-
-def collect_temperature(i2c1):
-    counter = 0
-    while not i2c1.try_lock():
-        counter += 1
-        if counter > 300:
-            return None
-
-    all_addresses = i2c1.scan()
-    tmp117s = [a for a in all_addresses if a in TMP117_ADDRESSES]
-    # print(all_addresses)
-    result = []
-
-    if not tmp117s:
-        print("No TMP117 found. Addresses on bus:", [hex(a) for a in all_addresses])
-    else:
-        for addr in tmp117s:
-            temp_c = _read_tmp117(i2c1, addr)
-            
-            if temp_c is not None:
-                temp_f = temp_c * 9 / 5 + 32
-                result.append(temp_f)
-
-    i2c1.unlock()
-    if(len(result) == 0):
-        return None
-    else:
-        return result
-
-send_message({"gps_valid": 0, "fix_mode": 0, "lat": 0.0, "lon": 0.0, "alt": 0.0}, None, None, None, None, None, None)
-
-try:
-    print("Initializing GPS...")
-    SATELLITE.GPS.obj._board = "PX1120S"
-    gps = SATELLITE.GPS.obj
-
-    print("Initializing I2C")
-    i2c1 = ArgusV4Interfaces.I2C1
-
-    print("Beginning Flight...")
-    if TPM.time() < 1735689600:  # RTC is uninitialized (before 2025), seed with compile-time approximation
-        TPM.set_time(1777669052)  # will be corrected on first 3D GPS fix
-    # ms8607 = MS8607(i2c1)
-    
+def recv_bit(timeout_ns=TIMEOUT_NS):
+    a, c = L[0].io, L[1].io
+    deadline = None if timeout_ns is None else time.monotonic_ns() + timeout_ns
     while True:
+        if not a.value: b = 0; break
+        if not c.value: b = 1; break
+        if deadline and time.monotonic_ns() > deadline:
+            _reset(); raise TimeoutError
+    ack = L[1 - b]
+    ack.low()              # 2. ACK
+    _wait(L[b], True)      # 3. wait for sender release
+    ack.release()          # 4. idle
+    return b
 
-        # TODO: IMU data
-        imu = SATELLITE.IMU
-        if SATELLITE.IMU_AVAILABLE:
-            imu_accel = imu.accel()
-            imu_gyro = imu.gyro()
-            imu_mag = imu.mag()
-        else:
-            imu_accel = None
-            imu_gyro = None
-            imu_mag = None
+def send_byte(x):
+    for i in range(7, -1, -1):
+        send_bit((x >> i) & 1)
 
-        # TODO: temperature data
-        temperature = 0
-        # temperature = collect_temperature(i2c1)
+def recv_byte(first_timeout_ns=TIMEOUT_NS):
+    x = recv_bit(first_timeout_ns)
+    for _ in range(7):
+        x = (x << 1) | recv_bit()
+    return x
 
-        # TODO: Collect pressure data
-        pressure = 0
-        # pressure = ms8607.pressure
-        humidity = 0
-        # humidity = ms8607.relative_humidity
+def send_bytes(buf):
+    for x in buf:
+        send_byte(x)
 
-        location = collect_location(gps)
+def recv_bytes(n):
+    out = bytearray(n)
+    for i in range(n):
+        out[i] = recv_byte()
+    return out
 
-        send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag)
-        
-        length = cam1.take_picture()
+def recv_bytes_no_alloc(n, buff):
+    for i in range(n):
+        print("Receiving byte", i)
+        buff[i] = recv_byte()
 
-        if length >= len(frame):
-            cam1.read_fifo(frame)
-            ArducamMega.render(frame)
+STEP = 2
+RAMP = " .:-=+*#%@"
 
-        time.sleep(15)
+def print_frame():
+    n = len(RAMP)
 
-except Exception as e:
-    logger.critical("ERROR:", e)
-    # TODO Log the error
+    for y in range(0, IMG_H, STEP):
+        base = y * IMG_W
+        row = []
+
+        for x in range(0, IMG_W, STEP):
+            v = FRAME[base + x]
+            row.append(RAMP[v * n // 256])
+
+        print("".join(row))
+
+    print()
+
+while True:
+    try:
+        print("Sending bit!")
+
+        send_bit(True)
+
+        print("Receiving bytes!")
+        recv_bytes_no_alloc(len(FRAME), FRAME)
+
+        print_frame()
+    except:
+        pass
+
+# testPin = digitalio.DigitalInOut(microcontroller.pin.GPIO8)
+# testPin.switch_to_output(value=True)
+
+# while True:
+#     testPin.value = not testPin.value
+#     print(testPin.value)
+
+#     time.sleep(5)
+#     pass
