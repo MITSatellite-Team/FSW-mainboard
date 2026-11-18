@@ -86,9 +86,9 @@ def collect_location(gps):
 
     return result
 
-_PACKET_FMT = '<2sIBBfffBffffBffBfffffffff2s'
+_PACKET_FMT = '<2sIBBfffBffffBfffffffff2s'
 
-def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag):
+def send_message(location, temperature, imu_accel, imu_gyro, imu_mag):
     gps_valid = location.get("gps_valid", 0)
     gps_fix = location.get("fix_mode", 0)
     lat = location.get("lat", 0.0)
@@ -101,10 +101,6 @@ def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro,
         for i in range(min(len(temperature), 4)):
             temp_valid |= (1 << i)
     t0, t1, t2, t3 = float(temps[0]), float(temps[1]), float(temps[2]), float(temps[3])
-
-    baro_valid = 0 if (pressure is None or humidity is None) else 1
-    pressure = float(pressure or 0.0)
-    humidity = float(humidity or 0.0)
 
     imu_valid = 0 if (imu_accel is None or imu_gyro is None or imu_mag is None) else 1
     if imu_valid:
@@ -120,12 +116,16 @@ def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro,
         TPM.time(),
         gps_valid, gps_fix, lat, lon, alt,
         temp_valid, t0, t1, t2, t3,
-        baro_valid, pressure, humidity,
         imu_valid, ax, ay, az, gx, gy, gz, mx, my, mz,
         b'RD',
     )
 
-    print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
+    print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | IMU {imu_valid}")
+    
+    sd_card.append("flight.txt")
+    sd_card.write(binascii.b2a_base64(payload) + '\n')
+    sd_card.sync()
+    
     SATELLITE.RADIO.send(payload)
 
 def read_tmp117(address):
@@ -205,9 +205,12 @@ def rid():
 SATELLITE.RADIO.startReceive()
 
 last_handled_packet_id = -1
+img_size = 0
 
 sd_card = QwiicOpenLog(ArgusV4Interfaces.I2C1)
 print("fw", sd_card.version(), sd_card.status())
+
+SATELLITE.GPS.obj._board = "PX1120S"
 
 last_tx = 0
 while True:
@@ -225,14 +228,21 @@ while True:
             if last_handled_packet_id != id:
                 if command == 0:
                     print("Taking image...")
-                    get_image(FRAME)
+ 
+                    size = get_image(FRAME)
+                    img_size = size
+
+                    sd_card.append(rid() + ".b64")
+                    sd_card.write(binascii.b2a_base64(FRAME[0:size]))
+                    sd_card.sync()
 
             if command == 0:
                 print("Took image!")
                 send(struct.pack(
-                    '<2sI',
+                    '<2sII',
                     b'FL',
-                    id
+                    id,
+                    img_size
                 ))
             elif command == 1:
                 print(packet[4], packet[5], (packet[4] << 8) + packet[5], len(FRAME) - 1)
@@ -251,7 +261,7 @@ while True:
         else:
             print("Invalid packet:", packet[:2])
 
-    if time.monotonic() - last_tx > 1:
+    if time.monotonic() - last_tx > 15:
         temperature_0 = 0
         temperature_1 = 0
 
@@ -273,70 +283,10 @@ while True:
 
         print(f"Collected IMU a: {imu_accel} g: {imu_gyro} m: {imu_mag}")
 
-        sd_card.append("flight.txt")
-        sd_card.write("%.4f,%.4f,%.4f\n" % (time.monotonic(), temperature_0, temperature_1))
-        sd_card.sync()
+        location = collect_location(SATELLITE.GPS.obj)
 
-        size = get_image(FRAME)
-
-        sd_card.append(rid() + ".b64")
-        sd_card.write(binascii.b2a_base64(FRAME[0:size]))
-        sd_card.sync()
+        send_message(location, temperatures, imu_accel, imu_gyro, imu_mag)
 
         last_tx = time.monotonic()
 
     time.sleep(0.01)
-
-
-# send_message({"gps_valid": 0, "fix_mode": 0, "lat": 0.0, "lon": 0.0, "alt": 0.0}, None, None, None, None, None, None)
-
-# try:
-#     print("Initializing GPS...")
-#     SATELLITE.GPS.obj._board = "PX1120S"
-#     gps = SATELLITE.GPS.obj
-
-#     print("Initializing I2C")
-#     i2c1 = ArgusV4Interfaces.I2C1
-
-#     print("Beginning Flight...")
-#     if TPM.time() < 1735689600:  # RTC is uninitialized (before 2025), seed with compile-time approximation
-#         TPM.set_time(1777669052)  # will be corrected on first 3D GPS fix
-#     # ms8607 = MS8607(i2c1)
-    
-#     while True:
-#         # TODO: IMU data
-#         imu = SATELLITE.IMU
-#         if SATELLITE.IMU_AVAILABLE:
-#             imu_accel = imu.accel()
-#             imu_gyro = imu.gyro()
-#             imu_mag = imu.mag()
-#         else:
-#             imu_accel = None
-#             imu_gyro = None
-#             imu_mag = None
-
-#         # TODO: temperature data
-#         temperature = 0
-#         # temperature = collect_temperature(i2c1)
-
-#         # TODO: Collect pressure data
-#         pressure = 0
-#         # pressure = ms8607.pressure
-#         humidity = 0
-#         # humidity = ms8607.relative_humidity
-
-#         location = collect_location(gps)
-
-#         send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag)
-        
-#         length = cam1.take_picture()
-
-#         if length >= len(frame):
-#             cam1.read_fifo(frame)
-#             ArducamMega.render(frame)
-
-#         time.sleep(15)
-
-# except Exception as e:RADIO
-    # logger.critical("ERROR:", e)
-    # TODO Log the error
