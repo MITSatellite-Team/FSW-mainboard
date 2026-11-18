@@ -31,31 +31,69 @@ CAPTURE_DONE = 0x04
 FORMAT_JPEG = 0x01
 FX_NONE = 0x00       # normal color
 
-# Capture resolutions that work on the 5MP Mega
-# (160x120, 800x600 and 1280x960 do NOT work on the 5MP model)
-RES_320x240 = 0x01   # QVGA
-RES_640x480 = 0x02   # VGA
-RES_1280x720 = 0x04  # HD (16:9, so the framing differs from the 4:3 modes)
+# Sensor IDs (register 0x40), from Arducam's SDK v3 ArducamCamera.h
+SENSOR_NAMES = {
+    0x81: "5MP v1", 0x82: "3MP v1",
+    0x83: "5MP v2", 0x84: "3MP v2",
+    0x85: "5MP (new)", 0x86: "3MP (new)", 0x87: "2MP (new)",
+}
+FIRST_NEW_SENSOR = 0x85   # 0x85 and up use the new resolution codes
+
+# Resolution register (0x21) codes as {(width, height): code}, from Arducam's
+# SDK v3 (CAM_IMAGE_MODE in ArducamCamera.h, legacyMode() in ArducamCamera.c).
+RES_CODES_NEW = {         # sensor ID 0x85 and up
+    (96, 96): 0x00,
+    (128, 128): 0x01,
+    (160, 120): 0x02,
+    (320, 240): 0x03,
+    (320, 320): 0x04,
+    (640, 480): 0x05,
+    (800, 600): 0x06,
+    (1024, 768): 0x07,
+    (1280, 720): 0x08,
+    (1280, 1024): 0x09,
+    (1600, 1200): 0x0A,
+    (1920, 1080): 0x0B,
+    (2048, 1536): 0x0C,
+    (2592, 1944): 0x0D,
+}
+RES_CODES_LEGACY = {      # sensor ID 0x81-0x84
+    # 160x120 (0x00), 800x600 (0x03) and 1280x960 (0x05) don't work on the old 5MP
+    (96, 96): 0x0A,
+    (128, 128): 0x0B,
+    (320, 240): 0x01,
+    (320, 320): 0x0C,
+    (640, 480): 0x02,
+    (1280, 720): 0x04,
+    (1600, 1200): 0x06,
+    (1920, 1080): 0x07,
+    (2048, 1536): 0x08,   # 3MP max
+    (2592, 1944): 0x09,   # 5MP max
+}
 
 # JPEG quality (the camera only offers three levels)
 QUALITY_HIGH = 0x00
 QUALITY_DEFAULT = 0x01
 QUALITY_LOW = 0x02
+QUALITY_NAMES = {QUALITY_HIGH: "high", QUALITY_DEFAULT: "default", QUALITY_LOW: "low"}
 
 # ---- size budget ----
 BUDGET = 20_000      # max bytes per image
 
-# Settings to try, best-looking first. JPEG size depends on the scene, so the
-# code steps down this list when an image is over budget and steps back up
-# when there's plenty of room. To pin one setting, leave a single entry.
-LADDER = (
-    ("1280x720 low",     RES_1280x720, QUALITY_LOW),
-    ("640x480 default",  RES_640x480,  QUALITY_DEFAULT),
-    ("640x480 low",      RES_640x480,  QUALITY_LOW),
-    ("320x240 default",  RES_320x240,  QUALITY_DEFAULT),
-    ("320x240 low",      RES_320x240,  QUALITY_LOW),
+# Settings to try, best-looking first, as ((width, height), quality). JPEG size
+# depends on the scene, so the code steps down this list when an image is over
+# budget and steps back up when there's plenty of room. Sizes are looked up in
+# the code table for whichever camera is attached. To pin one setting, leave a
+# single entry. (The new sensors also offer 800x600 and 1024x768, which sit
+# between 640x480 and 1280x720 if you want finer steps.)
+SETTINGS = (
+    ((1280, 720), QUALITY_LOW),      # 16:9, so the framing differs from 4:3
+    ((640, 480),  QUALITY_DEFAULT),
+    ((640, 480),  QUALITY_LOW),
+    ((320, 240),  QUALITY_DEFAULT),
+    ((320, 240),  QUALITY_LOW),
 )
-START_LEVEL = 2          # 640x480 low
+START_SETTING = ((640, 480), QUALITY_LOW)
 STEP_UP_BELOW = 0.4      # step up when an image uses < 40% of the budget...
 STEP_UP_COOLDOWN = 5     # ...but not within 5 captures of having to step down
 SETTLE_S = 0.5           # pause after changing settings
@@ -93,6 +131,7 @@ def wait_idle(timeout=2.0):
         time.sleep(0.002)
 
 def setup():
+    """Reset the camera and return its sensor ID."""
     spi.configure(baudrate=SPI_BAUD, phase=0, polarity=0)
 
     # wait for power up
@@ -104,6 +143,32 @@ def setup():
     write_reg(REG_SENSOR_RESET, SENSOR_RESET)
     wait_idle()
 
+    sensor_id = read_reg(REG_SENSOR_ID)
+    if sensor_id not in SENSOR_NAMES:
+        raise RuntimeError("Unknown sensor ID 0x%02X - check wiring" % sensor_id)
+    print("Camera sensor ID 0x%02X (%s), FPGA version 0x%02X" % (
+        sensor_id, SENSOR_NAMES[sensor_id], read_reg(REG_FPGA_VERSION)))
+    return sensor_id
+
+def build_ladder(codes):
+    """Turn SETTINGS into (name, code, quality) entries using this camera's
+    resolution codes. Returns the ladder and the level to start at."""
+    ladder = []
+    start = None
+    for (w, h), quality in SETTINGS:
+        code = codes.get((w, h))
+        if code is None:
+            print("This camera has no %dx%d mode - skipping that setting" % (w, h))
+            continue
+        if ((w, h), quality) == START_SETTING:
+            start = len(ladder)
+        ladder.append(("%dx%d %s" % (w, h, QUALITY_NAMES[quality]), code, quality))
+    if not ladder:
+        raise RuntimeError("None of the sizes in SETTINGS work on this camera")
+    if start is None:
+        start = len(ladder) - 1       # smallest; it steps up if there's room
+    return tuple(ladder), start
+
 def apply_level(level):
     name, res, quality = LADDER[level]
     print("Camera setting:", name)
@@ -114,6 +179,8 @@ def apply_level(level):
     time.sleep(SETTLE_S)
 
 def configure(level):
+    # Format first: the SDK rewrites the resolution after a format change on
+    # the new sensors, so the resolution must come after it.
     write_reg(REG_FORMAT, FORMAT_JPEG)
     wait_idle()
     write_reg(REG_COLOR_EFFECT, FX_NONE)
@@ -171,7 +238,24 @@ def get_jpeg():
 
     return memoryview(JPEG)[:end]
 
-level = START_LEVEL
+def jpeg_size(buf, n):
+    """Return (width, height) from a JPEG's frame header, or None.
+    Used to print each image's real size as a check on the settings."""
+    i = 2                             # skip FF D8
+    while i + 9 <= n:
+        if buf[i] != 0xFF:
+            return None
+        marker = buf[i + 1]
+        if marker == 0xFF:            # padding byte
+            i += 1
+            continue
+        if marker in (0xC0, 0xC1, 0xC2):   # SOF: FF Cx, len(2), bits, H(2), W(2)
+            return ((buf[i + 7] << 8) | buf[i + 8], (buf[i + 5] << 8) | buf[i + 6])
+        if marker == 0xDA:            # start of image data, no size found
+            return None
+        i += 2 + ((buf[i + 2] << 8) | buf[i + 3])
+    return None
+
 cooldown = 0
 
 def take_jpeg():
@@ -262,7 +346,12 @@ def send_jpeg(jpeg):
 while not spi.try_lock():
     pass
 
-setup()
+sensor_id = setup()
+
+if sensor_id >= FIRST_NEW_SENSOR:
+    LADDER, level = build_ladder(RES_CODES_NEW)
+else:
+    LADDER, level = build_ladder(RES_CODES_LEGACY)
 
 configure(level)
 
@@ -282,7 +371,9 @@ while True:
 
     try:
         jpeg = take_jpeg()
-        print("JPEG is", len(jpeg), "bytes at", LADDER[level][0])
+        wh = jpeg_size(jpeg, len(jpeg))
+        print("JPEG is", len(jpeg), "bytes,", "%dx%d" % wh if wh else "size unknown",
+              "(setting:", LADDER[level][0] + ")")
     except RuntimeError as e:
         print("Capture failed:", e)
         jpeg = b""   # length 0 tells the receiver there is no image this time
