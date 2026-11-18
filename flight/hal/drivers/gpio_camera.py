@@ -90,11 +90,11 @@ def get_image(buff):
         print(f"Received size {size}")
 
         print("Receiving image...")
-        recv_bytes_no_alloc(len(buff), buff)
+        recv_bytes_no_alloc(size, buff)
         print("Received all bytes!")
 
         return size
-    except:
+    except Exception as e:
         pass
 
     return None

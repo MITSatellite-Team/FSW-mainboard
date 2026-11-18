@@ -21,7 +21,8 @@ from hal.drivers.ms8607 import MS8607
 from hal.drivers.i2c_sdcard import QwiicOpenLog
 
 FIX_MODE_NAMES = {0: "NO_FIX", 1: "PREDICTION", 2: "2D", 3: "3D", 4: "DIFFERENTIAL"}
-TMP117_ADDRESSES  =  [0x4A, 0x4B]
+TMP117_ADDRESSES  =  [0x4A, 0x4B, 0x49]
+
 
 IMG_W, IMG_H = 160, 120
 FRAME = bytearray(IMG_W * IMG_H)
@@ -86,9 +87,9 @@ def collect_location(gps):
 
     return result
 
-_PACKET_FMT = '<2sIBBfffBffffBfffffffff2s'
+_PACKET_FMT = '<2sIBBfffBffffBffBfffffffff2s'
 
-def send_message(location, temperature, imu_accel, imu_gyro, imu_mag):
+def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro, imu_mag):
     gps_valid = location.get("gps_valid", 0)
     gps_fix = location.get("fix_mode", 0)
     lat = location.get("lat", 0.0)
@@ -101,6 +102,10 @@ def send_message(location, temperature, imu_accel, imu_gyro, imu_mag):
         for i in range(min(len(temperature), 4)):
             temp_valid |= (1 << i)
     t0, t1, t2, t3 = float(temps[0]), float(temps[1]), float(temps[2]), float(temps[3])
+
+    baro_valid = 0 if (pressure is None or humidity is None) else 1
+    pressure = float(pressure or 0.0)
+    humidity = float(humidity or 0.0)
 
     imu_valid = 0 if (imu_accel is None or imu_gyro is None or imu_mag is None) else 1
     if imu_valid:
@@ -116,12 +121,13 @@ def send_message(location, temperature, imu_accel, imu_gyro, imu_mag):
         TPM.time(),
         gps_valid, gps_fix, lat, lon, alt,
         temp_valid, t0, t1, t2, t3,
+        baro_valid, pressure, humidity,
         imu_valid, ax, ay, az, gx, gy, gz, mx, my, mz,
         b'RD',
     )
 
-    print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | IMU {imu_valid}")
-    
+    print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
+
     sd_card.append("flight.txt")
     sd_card.write(binascii.b2a_base64(payload) + '\n')
     sd_card.sync()
@@ -152,6 +158,7 @@ def collect_temperature():
             return None
 
     all_addresses = ArgusV4Interfaces.I2C1.scan()
+    print(all_addresses)
     tmp117s = [a for a in all_addresses if a in TMP117_ADDRESSES]
 
     result = []
@@ -212,6 +219,8 @@ print("fw", sd_card.version(), sd_card.status())
 
 SATELLITE.GPS.obj._board = "PX1120S"
 
+ms8607 = MS8607(ArgusV4Interfaces.I2C1)
+
 last_tx = 0
 while True:
     packet = poll()
@@ -231,6 +240,7 @@ while True:
  
                     size = get_image(FRAME)
                     img_size = size
+                    print(size)
 
                     sd_card.append(rid() + ".b64")
                     sd_card.write(binascii.b2a_base64(FRAME[0:size]))
@@ -238,6 +248,8 @@ while True:
 
             if command == 0:
                 print("Took image!")
+                print(id)
+                print(img_size)
                 send(struct.pack(
                     '<2sII',
                     b'FL',
@@ -262,14 +274,7 @@ while True:
             print("Invalid packet:", packet[:2])
 
     if time.monotonic() - last_tx > 15:
-        temperature_0 = 0
-        temperature_1 = 0
-
-        temperatures = collect_temperature() or []
-        if not temperatures is None and len(temperatures) > 0:
-            temperature_0 = temperatures[0]
-        if not temperatures is None and len(temperatures) > 1:
-            temperature_1 = temperatures[1]
+        temperatures = collect_temperature()
         print(f"Collected temperatures: {temperatures}")
 
         if SATELLITE.IMU_AVAILABLE:
@@ -284,8 +289,13 @@ while True:
         print(f"Collected IMU a: {imu_accel} g: {imu_gyro} m: {imu_mag}")
 
         location = collect_location(SATELLITE.GPS.obj)
+        print(f"Collected location {location}")
 
-        send_message(location, temperatures, imu_accel, imu_gyro, imu_mag)
+        pressure = ms8607.pressure
+        humidity = ms8607.relative_humidity
+        print(f"Collected pressure and humidity {pressure} {humidity}")
+
+        send_message(location, temperatures, pressure, humidity, imu_accel, imu_gyro, imu_mag)
 
         last_tx = time.monotonic()
 
