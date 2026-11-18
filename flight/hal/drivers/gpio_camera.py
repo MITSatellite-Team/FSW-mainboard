@@ -74,7 +74,8 @@ def recv_bytes(n):
 
 def recv_bytes_no_alloc(n, buff):
     for i in range(n):
-        print("Receiving byte", i)
+        if i % 1024 == 0:
+            print("Receiving byte", i)
         buff[i] = recv_byte()
 
 def get_image(buff):
@@ -83,8 +84,17 @@ def get_image(buff):
 
         send_bit(True)
 
-        print("Receiving bytes!")
+        print("Receiving size...")
+        size_data = recv_bytes(4)
+        size = int.from_bytes(size_data, "big")
+        print(f"Received size {size}")
+
+        print("Receiving image...")
         recv_bytes_no_alloc(len(buff), buff)
         print("Received all bytes!")
+
+        return size
     except:
         pass
+
+    return None

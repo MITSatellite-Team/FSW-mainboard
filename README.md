@@ -99,3 +99,5 @@ If the data structure has changed, wipe the SD card using the provided script.
 ### Mainboard brown-out / random restarts
 
 Radio cannot run without adequate power supply. If on USB power, disable some peripherals. Burn wires can also cause brown-outs — lower their drive strength.
+
+base64 -d 3554bfb3.txt > out.jpg

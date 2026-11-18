@@ -6,7 +6,9 @@ import busio
 import struct
 import digitalio
 import bitbangio
+import os
 import microcontroller.pin as GPIO
+import binascii
 
 from hal.drivers.gpio_camera import get_image
 from core import logger, setup_logger, state_manager
@@ -196,13 +198,16 @@ def poll():
         return None
     return data if state == OK else None
 
+def rid():
+    b = bytearray(os.urandom(4))
+    return "".join("%02x" % x for x in b)
+
 SATELLITE.RADIO.startReceive()
 
 last_handled_packet_id = -1
 
 sd_card = QwiicOpenLog(ArgusV4Interfaces.I2C1)
 print("fw", sd_card.version(), sd_card.status())
-log = 0
 
 last_tx = 0
 while True:
@@ -268,8 +273,14 @@ while True:
 
         print(f"Collected IMU a: {imu_accel} g: {imu_gyro} m: {imu_mag}")
 
-        sd_card.append("flight-log.txt")
+        sd_card.append("flight.txt")
         sd_card.write("%.4f,%.4f,%.4f\n" % (time.monotonic(), temperature_0, temperature_1))
+        sd_card.sync()
+
+        size = get_image(FRAME)
+
+        sd_card.append(rid() + ".b64")
+        sd_card.write(binascii.b2a_base64(FRAME[0:size]))
         sd_card.sync()
 
         last_tx = time.monotonic()

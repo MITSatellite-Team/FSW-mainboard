@@ -9,6 +9,8 @@ REG_FIFO_CTRL = 0x04
 REG_SENSOR_RESET = 0x07
 REG_FORMAT = 0x20
 REG_RESOLUTION = 0x21
+REG_COLOR_EFFECT = 0x27
+REG_IMAGE_QUALITY = 0x2A
 REG_SENSOR_ID = 0x40
 REG_YEAR = 0x41
 REG_MONTH = 0x42
@@ -26,9 +28,37 @@ SENSOR_RESET = 0x40
 STATE_IDLE = 0x02
 CAPTURE_DONE = 0x04
 
-FORMAT_YUV = 0x03  # YUYV 4:2:2 -> every even byte is a brightness (Y) value
-RES_QQVGA = 0x02  # 160x120
-IMG_W, IMG_H = 160, 120
+FORMAT_JPEG = 0x01
+FX_NONE = 0x00       # normal color
+
+# Capture resolutions that work on the 5MP Mega
+# (160x120, 800x600 and 1280x960 do NOT work on the 5MP model)
+RES_320x240 = 0x01   # QVGA
+RES_640x480 = 0x02   # VGA
+RES_1280x720 = 0x04  # HD (16:9, so the framing differs from the 4:3 modes)
+
+# JPEG quality (the camera only offers three levels)
+QUALITY_HIGH = 0x00
+QUALITY_DEFAULT = 0x01
+QUALITY_LOW = 0x02
+
+# ---- size budget ----
+BUDGET = 20_000      # max bytes per image
+
+# Settings to try, best-looking first. JPEG size depends on the scene, so the
+# code steps down this list when an image is over budget and steps back up
+# when there's plenty of room. To pin one setting, leave a single entry.
+LADDER = (
+    ("1280x720 low",     RES_1280x720, QUALITY_LOW),
+    ("640x480 default",  RES_640x480,  QUALITY_DEFAULT),
+    ("640x480 low",      RES_640x480,  QUALITY_LOW),
+    ("320x240 default",  RES_320x240,  QUALITY_DEFAULT),
+    ("320x240 low",      RES_320x240,  QUALITY_LOW),
+)
+START_LEVEL = 2          # 640x480 low
+STEP_UP_BELOW = 0.4      # step up when an image uses < 40% of the budget...
+STEP_UP_COOLDOWN = 5     # ...but not within 5 captures of having to step down
+SETTLE_S = 0.5           # pause after changing settings
 
 SPI_BAUD = 4000000  # Mega supports up to 8 MHz; 4 MHz is safer on jumper wires
 
@@ -74,11 +104,21 @@ def setup():
     write_reg(REG_SENSOR_RESET, SENSOR_RESET)
     wait_idle()
 
-def configure():
-    write_reg(REG_FORMAT, FORMAT_YUV)
+def apply_level(level):
+    name, res, quality = LADDER[level]
+    print("Camera setting:", name)
+    write_reg(REG_RESOLUTION, res)  # bit 7 = 0 -> still-capture mode
     wait_idle()
-    write_reg(REG_RESOLUTION, RES_QQVGA)  # bit 7 = 0 -> still-capture mode
+    write_reg(REG_IMAGE_QUALITY, quality)
     wait_idle()
+    time.sleep(SETTLE_S)
+
+def configure(level):
+    write_reg(REG_FORMAT, FORMAT_JPEG)
+    wait_idle()
+    write_reg(REG_COLOR_EFFECT, FX_NONE)
+    wait_idle()
+    apply_level(level)
 
     # let auto-exposure settle after the mode change
     time.sleep(1.0)
@@ -98,32 +138,63 @@ def capture():
         | (read_reg(REG_FIFO_SIZE3) << 16)
     )
 
-FRAME = bytearray(IMG_W * IMG_H)      # grayscale (Y) frame, allocated once
-_row = bytearray(IMG_W * 2)           # one YUYV row
+JPEG = bytearray(BUDGET)              # JPEG buffer, allocated once
 _burst = bytes((CMD_BURST_READ,))
 _dummy = bytearray(1)
 
-def get_frame():
+def get_jpeg():
+    """Capture one JPEG. Returns a zero-copy memoryview of the image bytes,
+    or None if the image is over budget (it is never read in that case)."""
     length = capture()
 
-    if length < IMG_W * IMG_H * 2:
-        raise RuntimeError("Frame is smaller than expected")
+    if length > BUDGET:
+        print("Over budget:", length, "bytes")
+        return None
+    if length < 4:
+        raise RuntimeError("Bad JPEG length: %d" % length)
 
     cs.value = False
-    
     spi.write(_burst)
     spi.readinto(_dummy)              # Mega sends one dummy byte first
-
-    i = 0
-    for _ in range(IMG_H):
-        spi.readinto(_row)
-        for x in range(0, IMG_W * 2, 2):   # keep only Y bytes
-            FRAME[i] = _row[x]
-            i += 1
-
+    spi.readinto(JPEG, end=length)    # whole FIFO in one go
     cs.value = True
 
-    return FRAME
+    if JPEG[0] != 0xFF or JPEG[1] != 0xD8:
+        raise RuntimeError("Missing JPEG start marker (got %02X %02X)" % (JPEG[0], JPEG[1]))
+
+    # The FIFO length can include padding after the image: trim to the last FF D9.
+    end = length
+    while end > 4 and not (JPEG[end - 2] == 0xFF and JPEG[end - 1] == 0xD9):
+        end -= 1
+    if end <= 4:
+        raise RuntimeError("Missing JPEG end marker")
+
+    return memoryview(JPEG)[:end]
+
+level = START_LEVEL
+cooldown = 0
+
+def take_jpeg():
+    """Capture at the current setting, stepping down and retaking until it fits."""
+    global level, cooldown
+    while True:
+        jpeg = get_jpeg()
+        if jpeg is not None:
+            return jpeg
+        if level == len(LADDER) - 1:
+            raise RuntimeError("Even the smallest setting is over budget")
+        level += 1
+        cooldown = STEP_UP_COOLDOWN
+        apply_level(level)
+
+def maybe_step_up(size):
+    """Called between requests: move to a better setting if there's room."""
+    global level, cooldown
+    if cooldown:
+        cooldown -= 1
+    elif level > 0 and size < BUDGET * STEP_UP_BELOW:
+        level -= 1
+        apply_level(level)
 
 led = digitalio.DigitalInOut(board.LED)
 led.direction = digitalio.Direction.OUTPUT
@@ -158,6 +229,7 @@ def send_bit(b):
     _wait(other, True)     # 4. back to idle
 
 def recv_bit(timeout_ns=TIMEOUT_NS):
+    """Only used to receive the 1-bit capture request from receiver.py."""
     a, c = L[0].io, L[1].io
     deadline = None if timeout_ns is None else time.monotonic_ns() + timeout_ns
     while True:
@@ -175,51 +247,24 @@ def send_byte(x):
     for i in range(7, -1, -1):
         send_bit((x >> i) & 1)
 
-def recv_byte(first_timeout_ns=TIMEOUT_NS):
-    x = recv_bit(first_timeout_ns)
-    for _ in range(7):
-        x = (x << 1) | recv_bit()
-    return x
-
 def send_bytes(buf):
-    i = 0
-
-    for x in buf:
-        print("Sending byte", i)
-        i += 1
-
+    for i, x in enumerate(buf):
+        if i % 1024 == 0:   # printing every byte slows the link a lot
+            print("Sending byte", i)
         send_byte(x)
 
-def recv_bytes(n):
-    out = bytearray(n)
-    for i in range(n):
-        out[i] = recv_byte()
-    return out
+# ---- framing: 4-byte big-endian length, then the JPEG bytes (see receiver.py) ----
 
-STEP = 2
-RAMP = " .:-=+*#%@"
-
-def print_frame():
-    n = len(RAMP)
-
-    for y in range(0, IMG_H, STEP):
-        base = y * IMG_W
-        row = []
-
-        for x in range(0, IMG_W, STEP):
-            v = FRAME[base + x]
-            row.append(RAMP[v * n // 256])
-
-        print("".join(row))
-
-    print()
+def send_jpeg(jpeg):
+    send_bytes(len(jpeg).to_bytes(4, "big"))
+    send_bytes(jpeg)
 
 while not spi.try_lock():
     pass
 
 setup()
 
-configure()
+configure(level)
 
 led.value = True
 
@@ -235,20 +280,28 @@ while True:
     print("Taking image...")
     led.value = False
 
-    frame = get_frame()
+    try:
+        jpeg = take_jpeg()
+        print("JPEG is", len(jpeg), "bytes at", LADDER[level][0])
+    except RuntimeError as e:
+        print("Capture failed:", e)
+        jpeg = b""   # length 0 tells the receiver there is no image this time
 
     print("Sending image...")
+    t0 = time.monotonic()
 
     try:
-        send_bytes(FRAME)
+        send_jpeg(jpeg)
+        dt = time.monotonic() - t0
+        print("Sent image in %.1f s (%d bytes/s)" % (dt, len(jpeg) / dt if dt else 0))
     except:
-        pass
+        print("Send failed")
 
-    print("Sent image...")
     led.value = True
 
+    size = len(jpeg)
+    jpeg = None
     gc.collect()
 
-    print_frame()
-
-spi.unlock()
+    if size:
+        maybe_step_up(size)
