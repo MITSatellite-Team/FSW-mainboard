@@ -33,7 +33,8 @@ _px = [0] * (DW * DH)
 
 class ArducamMega:
     def __init__(self, spi, cs):
-        self.cam = SPIDevice(spi, digitalio.DigitalInOut(cs), baudrate=1_000_000, polarity=0, phase=0)
+        # self.cam = SPIDevice(spi, digitalio.DigitalInOut(cs), baudrate=1_000_000, polarity=0, phase=0)
+        self.cam = SPIDevice(spi, digitalio.DigitalInOut(cs), baudrate=1000, polarity=0, phase=0)
 
     def write_register(self, register, value):
         with self.cam as bus:
@@ -52,8 +53,8 @@ class ArducamMega:
         while (self.read_register(REG_STATE) & 0x03) != 0x02:
             print(self.read_register(REG_STATE))
 
-            if (time.monotonic_ns() // 1_000_000) - t0 > timeout_ms:
-                raise ValueError("Failed to reach idle!")
+            # if (time.monotonic_ns() // 1_000_000) - t0 > timeout_ms:
+            #     raise ValueError("Failed to reach idle!")
 
             time.sleep(0.002)
 
@@ -106,8 +107,9 @@ class ArducamMega:
         t0 = time.monotonic_ns() // 1_000_000
         
         while not (self.read_register(REG_STATE) & CAP_DONE):
-            if (time.monotonic_ns() // 1_000_000) - t0 > timeout_ms:
-                raise OSError("capture never finished")
+            # if (time.monotonic_ns() // 1_000_000) - t0 > timeout_ms:
+            #     raise OSError("capture never finished")
+            pass
         
         b0, b1, b2 = (self.read_register(r) for r in REG_FIFO_SIZE)
         

@@ -16,9 +16,10 @@ from core.time_processor import TimeProcessor as TPM
 from hal.configuration import SATELLITE
 from hal.argus_v4 import ArgusV4Interfaces
 from hal.drivers.ms8607 import MS8607
+from hal.drivers.i2c_sdcard import QwiicOpenLog
 
 FIX_MODE_NAMES = {0: "NO_FIX", 1: "PREDICTION", 2: "2D", 3: "3D", 4: "DIFFERENTIAL"}
-TMP117_ADDRESSES  =  [0x48, 0x49, 0x4A, 0x4B]
+TMP117_ADDRESSES  =  [0x4A, 0x4B]
 
 IMG_W, IMG_H = 160, 120
 FRAME = bytearray(IMG_W * IMG_H)
@@ -40,6 +41,13 @@ setup_logger(level=CONFIG.LOG_LEVEL)
 
 print("Waiting 1 sec...")
 time.sleep(1)
+
+# while not ArgusV4Interfaces.I2C1.try_lock():
+#     pass
+# try:
+#     print([hex(a) for a in ArgusV4Interfaces.I2C1.scan()])
+# finally:
+#     ArgusV4Interfaces.I2C1.unlock()
 
 def collect_location(gps):
     print("Collecting Location...")
@@ -118,11 +126,11 @@ def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro,
     print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
     SATELLITE.RADIO.send(payload)
 
-def _read_tmp117(i2c, address):
+def read_tmp117(address):
     buf = bytearray(2)
 
     try:
-        i2c.writeto_then_readfrom(address, bytes([0x00]), buf)
+        ArgusV4Interfaces.I2C1.writeto_then_readfrom(address, bytes([0x00]), buf)
     except Exception as e:
         print("  Read error at {}: {}".format(hex(address), e))
 
@@ -134,29 +142,30 @@ def _read_tmp117(i2c, address):
 
     return raw * 0.0078125
 
-def collect_temperature(i2c1):
+def collect_temperature():
     counter = 0
-    while not i2c1.try_lock():
+    while not ArgusV4Interfaces.I2C1.try_lock():
         counter += 1
         if counter > 300:
             return None
 
-    all_addresses = i2c1.scan()
+    all_addresses = ArgusV4Interfaces.I2C1.scan()
     tmp117s = [a for a in all_addresses if a in TMP117_ADDRESSES]
-    # print(all_addresses)
+
     result = []
 
     if not tmp117s:
         print("No TMP117 found. Addresses on bus:", [hex(a) for a in all_addresses])
     else:
         for addr in tmp117s:
-            temp_c = _read_tmp117(i2c1, addr)
+            temp_c = read_tmp117(addr)
             
             if temp_c is not None:
                 temp_f = temp_c * 9 / 5 + 32
                 result.append(temp_f)
 
-    i2c1.unlock()
+    ArgusV4Interfaces.I2C1.unlock()
+
     if(len(result) == 0):
         return None
     else:
@@ -191,7 +200,11 @@ SATELLITE.RADIO.startReceive()
 
 last_handled_packet_id = -1
 
-last_tx = time.monotonic()
+sd_card = QwiicOpenLog(ArgusV4Interfaces.I2C1)
+print("fw", sd_card.version(), sd_card.status())
+log = 0
+
+last_tx = 0
 while True:
     packet = poll()
 
@@ -233,11 +246,36 @@ while True:
         else:
             print("Invalid packet:", packet[:2])
 
-    if time.monotonic() - last_tx > 15:
-        # send update
+    if time.monotonic() - last_tx > 1:
+        temperature_0 = 0
+        temperature_1 = 0
+
+        temperatures = collect_temperature() or []
+        if not temperatures is None and len(temperatures) > 0:
+            temperature_0 = temperatures[0]
+        if not temperatures is None and len(temperatures) > 1:
+            temperature_1 = temperatures[1]
+        print(f"Collected temperatures: {temperatures}")
+
+        if SATELLITE.IMU_AVAILABLE:
+            imu_accel = SATELLITE.IMU.accel()
+            imu_gyro = SATELLITE.IMU.gyro()
+            imu_mag = SATELLITE.IMU.mag()
+        else:
+            imu_accel = None
+            imu_gyro = None
+            imu_mag = None
+
+        print(f"Collected IMU a: {imu_accel} g: {imu_gyro} m: {imu_mag}")
+
+        sd_card.append("flight-log.txt")
+        sd_card.write("%.4f,%.4f,%.4f\n" % (time.monotonic(), temperature_0, temperature_1))
+        sd_card.sync()
+
         last_tx = time.monotonic()
 
     time.sleep(0.01)
+
 
 # send_message({"gps_valid": 0, "fix_mode": 0, "lat": 0.0, "lon": 0.0, "alt": 0.0}, None, None, None, None, None, None)
 
