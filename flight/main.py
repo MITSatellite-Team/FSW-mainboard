@@ -45,13 +45,6 @@ setup_logger(level=CONFIG.LOG_LEVEL)
 print("Waiting 1 sec...")
 time.sleep(1)
 
-# while not ArgusV4Interfaces.I2C1.try_lock():
-#     pass
-# try:
-#     print([hex(a) for a in ArgusV4Interfaces.I2C1.scan()])
-# finally:
-#     ArgusV4Interfaces.I2C1.unlock()
-
 def collect_location(gps):
     print("Collecting Location...")
     result = {"gps_valid": 0, "fix_mode": 0, "gps_utc": "", "lat": 0.0, "lon": 0.0, "alt": 0.0}
@@ -128,9 +121,12 @@ def send_message(location, temperature, pressure, humidity, imu_accel, imu_gyro,
 
     print(f"Sending {len(payload)}B | t={TPM.time()} | GPS {gps_valid}/{gps_fix} ({lat},{lon},{alt}) | Temps {temperature} | Baro {pressure}hPa {humidity}% | IMU {imu_valid}")
 
-    sd_card.append("flight.txt")
-    sd_card.write(binascii.b2a_base64(payload) + '\n')
-    sd_card.sync()
+    try:
+        sd_card.append("flight.txt")
+        sd_card.write(binascii.b2a_base64(payload) + '\n')
+        sd_card.sync()
+    except:
+        print("Failed to save packet")
     
     SATELLITE.RADIO.send(payload)
 
@@ -214,89 +210,123 @@ SATELLITE.RADIO.startReceive()
 last_handled_packet_id = -1
 img_size = 0
 
-sd_card = QwiicOpenLog(ArgusV4Interfaces.I2C1)
-print("fw", sd_card.version(), sd_card.status())
+sd_card = None
+try:
+    sd_card = QwiicOpenLog(ArgusV4Interfaces.I2C1)
+    print("fw", sd_card.version(), sd_card.status())
+except:
+    print("SD card failed to initialize")
 
-SATELLITE.GPS.obj._board = "PX1120S"
+gps = None
+try:
+    SATELLITE.GPS.obj._board = "PX1120S"
+    gps = SATELLITE.GPS.obj
+except:
+    print("GPS card failed to initialize")
 
-ms8607 = MS8607(ArgusV4Interfaces.I2C1)
+ms8607 = None
+try:
+    ms8607 = MS8607(ArgusV4Interfaces.I2C1)
+except:
+    print("Barometer failed to initialize")
 
 last_tx = 0
 while True:
+    try:
+        if time.monotonic() - last_tx > 15:
+            temperatures = collect_temperature()
+            print(f"Collected temperatures: {temperatures}")
+
+            if SATELLITE.IMU_AVAILABLE:
+                imu_accel = SATELLITE.IMU.accel()
+                imu_gyro = SATELLITE.IMU.gyro()
+                imu_mag = SATELLITE.IMU.mag()
+
+                print(f"Collected IMU a: {imu_accel} g: {imu_gyro} m: {imu_mag}")
+            else:
+                imu_accel = None
+                imu_gyro = None
+                imu_mag = None
+
+            location = None
+            if not gps is None:
+                location = collect_location(gps)
+                print(f"Collected location {location}")
+
+            pressure = None
+            humidity = None
+
+            if not ms8607 is None:
+                pressure = ms8607.pressure
+                humidity = ms8607.relative_humidity
+
+                print(f"Collected pressure and humidity {pressure} {humidity}")
+
+            send_message(location, temperatures, pressure, humidity, imu_accel, imu_gyro, imu_mag)
+
+            last_tx = time.monotonic()
+    except:
+        print("Failed to send update")
+
     packet = poll()
 
-    if packet is not None:
-        print("Packet:", packet, SATELLITE.RADIO.rssi())
+    try:
+        if packet is not None:
+            print("Packet:", packet, SATELLITE.RADIO.rssi())
 
-        if len(packet) >= 4 and packet[:2] == b'CM':
-            command = packet[2]
-            id = packet[3]
+            if len(packet) >= 4 and packet[:2] == b'CM':
+                command = packet[2]
+                id = packet[3]
 
-            print("Command:", command, id)
-            
-            if last_handled_packet_id != id:
-                if command == 0:
-                    print("Taking image...")
- 
-                    size = get_image(FRAME)
-                    img_size = size
-                    print(size)
-
-                    sd_card.append(rid() + ".b64")
-                    sd_card.write(binascii.b2a_base64(FRAME[0:size]))
-                    sd_card.sync()
-
-            if command == 0:
-                print("Took image!")
-                print(id)
-                print(img_size)
-                send(struct.pack(
-                    '<2sII',
-                    b'FL',
-                    id,
-                    img_size
-                ))
-            elif command == 1:
-                print(packet[4], packet[5], (packet[4] << 8) + packet[5], len(FRAME) - 1)
-                read_index = min(len(FRAME) - 1, (packet[4] << 8) + packet[5])
-
-                print("Sending image data from image", read_index)
+                print("Command:", command, id)
                 
-                send(struct.pack(
-                    '<2sI200s',
-                    b'FL',
-                    id,
-                    FRAME[read_index:min(len(FRAME), read_index + 200)]
-                ))
+                if last_handled_packet_id != id:
+                    if command == 0:
+                        print("Taking image...")
+    
+                        size = get_image(FRAME)
+                        
+                        if size is None:
+                            img_size = 0
+                        else:
+                            img_size = size
+                        
+                        print(size)
 
-            last_handled_packet_id = id
-        else:
-            print("Invalid packet:", packet[:2])
+                        try:
+                            sd_card.append(rid() + ".b64")
+                            sd_card.write(binascii.b2a_base64(FRAME[0:size]))
+                            sd_card.sync()
+                        except:
+                            print("Failed to save image")
 
-    if time.monotonic() - last_tx > 15:
-        temperatures = collect_temperature()
-        print(f"Collected temperatures: {temperatures}")
+                if command == 0:
+                    print("Took image!")
+                    print(id)
+                    print(img_size)
+                    send(struct.pack(
+                        '<2sII',
+                        b'FL',
+                        id,
+                        img_size
+                    ))
+                elif command == 1:
+                    print(packet[4], packet[5], (packet[4] << 8) + packet[5], len(FRAME) - 1)
+                    read_index = min(len(FRAME) - 1, (packet[4] << 8) + packet[5])
 
-        if SATELLITE.IMU_AVAILABLE:
-            imu_accel = SATELLITE.IMU.accel()
-            imu_gyro = SATELLITE.IMU.gyro()
-            imu_mag = SATELLITE.IMU.mag()
-        else:
-            imu_accel = None
-            imu_gyro = None
-            imu_mag = None
+                    print("Sending image data from image", read_index)
+                    
+                    send(struct.pack(
+                        '<2sI200s',
+                        b'FL',
+                        id,
+                        FRAME[read_index:min(len(FRAME), read_index + 200)]
+                    ))
 
-        print(f"Collected IMU a: {imu_accel} g: {imu_gyro} m: {imu_mag}")
-
-        location = collect_location(SATELLITE.GPS.obj)
-        print(f"Collected location {location}")
-
-        pressure = ms8607.pressure
-        humidity = ms8607.relative_humidity
-        print(f"Collected pressure and humidity {pressure} {humidity}")
-
-        send_message(location, temperatures, pressure, humidity, imu_accel, imu_gyro, imu_mag)
-
-        last_tx = time.monotonic()
+                last_handled_packet_id = id
+            else:
+                print("Invalid packet:", packet[:2])
+    except:
+        print("Failed to handle command")
 
     time.sleep(0.01)

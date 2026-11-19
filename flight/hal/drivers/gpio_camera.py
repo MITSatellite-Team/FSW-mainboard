@@ -88,10 +88,12 @@ def get_image(buff):
         size_data = recv_bytes(4)
         size = int.from_bytes(size_data, "big")
         print(f"Received size {size}")
+        size = None
 
-        print("Receiving image...")
-        recv_bytes_no_alloc(size, buff)
-        print("Received all bytes!")
+        if not size is None
+            print("Receiving image...")
+            recv_bytes_no_alloc(size, buff)
+            print("Received all bytes!")
 
         return size
     except Exception as e:
